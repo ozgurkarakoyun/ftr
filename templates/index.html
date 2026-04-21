@@ -511,7 +511,7 @@ tr:last-child td{border-bottom:none}
               </div>
             </div>
 
-            <div class="card">
+            <div class="card" style="margin-bottom:16px">
               <div class="ch"><span class="ct">🧪 Tedavi Protokolü</span></div>
               <div class="cb">
                 <div class="fg" style="margin-bottom:10px">
@@ -524,6 +524,53 @@ tr:last-child td{border-bottom:none}
                 </div>
                 <button class="ai-btn ai-btn-p" id="btn-ai-protokol" style="width:100%">🤖 Protokol Oluştur</button>
                 <div class="ai-result" id="ai-protokol-result" style="display:none"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="ch">
+                <span class="ct">📋 FTR Tedavi Programı</span>
+                <span style="font-size:10px;color:var(--acc2);font-weight:600;background:var(--as);padding:3px 8px;border-radius:100px">KLİNİK MODALİTELER</span>
+              </div>
+              <div class="cb">
+                <div class="fg" style="margin-bottom:12px">
+                  <label>Hasta</label>
+                  <div class="hpicker" id="hpicker-ftr">
+                    <div class="hp-wrap">
+                      <span class="hp-icon">🔍</span>
+                      <input class="hp-inp" id="hp-ftr-inp" placeholder="Hasta ara..." autocomplete="off" readonly>
+                      <button class="hp-clr" id="hp-ftr-clr" type="button" tabindex="-1">✕</button>
+                    </div>
+                    <div class="hp-dd" id="hp-ftr-dd"></div>
+                  </div>
+                  <input type="hidden" id="ftr-hasta-id">
+                </div>
+                <div style="margin-bottom:12px">
+                  <label style="display:block;margin-bottom:8px">Uygulanacak Tedaviler</label>
+                  <div id="ftr-islem-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+                </div>
+                <div class="g2" style="margin-bottom:12px">
+                  <div class="fg">
+                    <label>Seans Sayısı</label>
+                    <input type="number" id="ftr-seans-sayisi" value="10" min="1" max="60">
+                  </div>
+                  <div class="fg">
+                    <label>Başlangıç Tarihi</label>
+                    <input type="date" id="ftr-baslangic">
+                  </div>
+                </div>
+                <div class="fg" style="margin-bottom:12px">
+                  <label>Ek Notlar / Özel Durum</label>
+                  <textarea id="ftr-ek-not" placeholder="Kontraendikasyon, hasta notu..." style="min-height:56px"></textarea>
+                </div>
+                <button class="ai-btn ai-btn-g" id="btn-ai-ftr" style="width:100%;justify-content:center">📋 FTR Programı Oluştur</button>
+                <div id="ftr-result" style="display:none;margin-top:12px">
+                  <div class="epikriz-preview" id="ftr-result-text"></div>
+                  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                    <button class="ai-btn ai-btn-p" id="btn-ftr-kaydet" style="font-size:12px;padding:8px 14px">💾 Kaydet</button>
+                    <button class="ai-btn" id="btn-ftr-yazdir" style="font-size:12px;padding:8px 14px;border:1px solid var(--bdr)">🖨️ Yazdır</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1699,7 +1746,7 @@ async function renderAiNotlar(hastaId){
     var notlar=await api('/api/ai_notlar/'+hastaId);
     if(!notlar.length){el.innerHTML='<div class="empty">Bu hasta için kayıtlı AI notu yok</div>';return;}
     var tipRenk={seans_notu:'var(--acc)',epikriz:'var(--g)',randevu_oneri:'var(--w)',ilerleme:'var(--p)',protokol:'var(--d)'};
-    var tipLbl={seans_notu:'Seans Notu',epikriz:'Epikriz',randevu_oneri:'Randevu Önerisi',ilerleme:'İlerleme Analizi',protokol:'Protokol'};
+    var tipLbl={seans_notu:'Seans Notu',epikriz:'Epikriz',randevu_oneri:'Randevu Önerisi',ilerleme:'İlerleme Analizi',protokol:'Protokol',ftr_program:'FTR Programı'};
     el.innerHTML=notlar.map(function(n){
       return '<div style="border:1px solid var(--bdr);border-radius:var(--r2);padding:14px;margin-bottom:10px">'
         +'<div style="display:flex;justify-content:space-between;margin-bottom:8px">'
@@ -1719,6 +1766,174 @@ function updateAiNotlarSel(){
   var el=g('ai-notlar-hasta');var v=el.value;
   el.innerHTML='<option value="">Hasta seçin...</option>'+hastalar.map(function(h){return'<option value="'+h.id+'">'+h.ad+' '+h.soyad+'</option>';}).join('');
   el.value=v;
+}
+
+
+// ─── FTR PROGRAM ─────────────────────────────────────────────────
+var ftrHastaId = null;
+var ftrSelIslemler = [];
+var ftrDocText = '';
+
+var ISLEM_LISTESI = [
+  {id:'SIS',l:'SİS',c:'#0ea5e9'},{id:'HIL',l:'HIL Laser',c:'#8b5cf6'},
+  {id:'ESWT',l:'ESWT',c:'#ef4444'},{id:'KINEZIO',l:'Kinezyo Bant',c:'#f59e0b'},
+  {id:'INFRARUJ',l:'İnfraruj',c:'#f97316'},{id:'TENS',l:'TENS',c:'#10b981'},
+  {id:'PARAFIN',l:'Parafin',c:'#ec4899'},{id:'LIPODEM',l:'Lipödem Ted.',c:'#14b8a6'},
+  {id:'BANDAJ',l:'Bandajlama',c:'#6366f1'},{id:'SKOLYOZ',l:'Skolyoz Egz.',c:'#84cc16'},
+  {id:'EGZERSIZ',l:'Egzersiz',c:'#22c55e'},{id:'KONTRAS',l:'Kontrast Banyo',c:'#3b82f6'}
+];
+
+function initFtrChips() {
+  var el = g('ftr-islem-chips');
+  ftrSelIslemler = [];
+  el.innerHTML = ISLEM_LISTESI.map(function(i){
+    return '<div class="chip" data-ftr-isl="'+i.id+'" style="font-size:12px;padding:5px 11px;margin:2px">'+i.l+'</div>';
+  }).join('');
+  el.querySelectorAll('[data-ftr-isl]').forEach(function(c){
+    c.addEventListener('click', function(){
+      var id = c.dataset.ftrIsl;
+      if(ftrSelIslemler.indexOf(id)!==-1){
+        ftrSelIslemler = ftrSelIslemler.filter(function(x){return x!==id;});
+        c.classList.remove('on');
+      } else {
+        ftrSelIslemler.push(id);
+        c.classList.add('on');
+      }
+    });
+  });
+}
+
+function hpInitFtr() {
+  var inp = g('hp-ftr-inp'), clr = g('hp-ftr-clr'), dd = g('hp-ftr-dd');
+  inp.addEventListener('focus', function(){
+    inp.readOnly = false;
+    hpBuildDDFtr('');
+    dd.classList.add('open');
+  });
+  inp.addEventListener('blur', function(){
+    setTimeout(function(){
+      dd.classList.remove('open');
+      if(ftrHastaId){
+        var h = hastalar.find(function(x){return x.id===ftrHastaId;});
+        if(h) inp.value = h.ad+' '+h.soyad;
+      } else { inp.value=''; }
+      inp.readOnly = true;
+    }, 200);
+  });
+  inp.addEventListener('input', function(){ hpBuildDDFtr(inp.value); });
+  clr.addEventListener('click', function(){
+    ftrHastaId = null; inp.value=''; inp.readOnly=false; inp.focus();
+    g('ftr-hasta-id').value=''; clr.classList.remove('vis');
+    hpBuildDDFtr(''); dd.classList.add('open');
+  });
+}
+
+function hpBuildDDFtr(filter) {
+  filter = (filter||'').toLowerCase();
+  var dd = g('hp-ftr-dd');
+  var fl = hastalar.filter(function(h){
+    return (h.ad+' '+h.soyad+' '+(h.tani||'')).toLowerCase().indexOf(filter)!==-1;
+  }).slice(0,12);
+  if(!fl.length){dd.innerHTML='<div class="hp-empty">Sonuç bulunamadı</div>';return;}
+  dd.innerHTML = fl.map(function(h){
+    var col = avColor(h.ad+h.soyad);
+    return '<div class="hp-opt" data-fhid="'+h.id+'">'
+      +'<div class="hp-av" style="background:'+col+'">'+(h.ad[0]+h.soyad[0]).toUpperCase()+'</div>'
+      +'<div><div class="hp-name">'+h.ad+' '+h.soyad+'</div>'
+      +'<div class="hp-sub">'+(h.tani||'—')+'</div></div></div>';
+  }).join('');
+  dd.querySelectorAll('[data-fhid]').forEach(function(el){
+    el.addEventListener('mousedown', function(e){
+      e.preventDefault();
+      ftrHastaId = el.dataset.fhid;
+      var h = hastalar.find(function(x){return x.id===ftrHastaId;});
+      g('hp-ftr-inp').value = h ? h.ad+' '+h.soyad : '';
+      g('hp-ftr-inp').readOnly = true;
+      g('ftr-hasta-id').value = ftrHastaId;
+      g('hp-ftr-clr').classList.add('vis');
+      dd.classList.remove('open');
+      // Otomatik seans sayisi doldur
+      if(h && h.slim) g('ftr-seans-sayisi').value = h.slim;
+      // Gecmisin en cok kullandigi islemleri otomatik sec
+      autoSelectFtrIslemler(ftrHastaId);
+    });
+  });
+}
+
+async function autoSelectFtrIslemler(hastaId) {
+  try {
+    var ss = await api('/api/seanslar?hasta_id='+hastaId+'&limit=999');
+    var sayim = {};
+    ss.forEach(function(s){
+      parseIslemler(s.islemler).forEach(function(isl){
+        sayim[isl] = (sayim[isl]||0)+1;
+      });
+    });
+    // En cok kullanilan 4 islemi otomatik sec
+    var enCok = Object.keys(sayim).sort(function(a,b){return sayim[b]-sayim[a];}).slice(0,4);
+    ftrSelIslemler = enCok;
+    document.querySelectorAll('[data-ftr-isl]').forEach(function(c){
+      c.classList.toggle('on', ftrSelIslemler.indexOf(c.dataset.ftrIsl)!==-1);
+    });
+    if(enCok.length>0) toast('Gecmis seanslardan '+enCok.length+' islem secildi');
+  } catch(e){}
+}
+
+async function aiFtrProgram() {
+  if(!ftrHastaId){toast('Hasta secin!','err');return;}
+  if(!ftrSelIslemler.length){toast('En az bir tedavi modalitesi secin!','err');return;}
+  var h = hastalar.find(function(x){return x.id===ftrHastaId;});
+  var ss = await api('/api/seanslar?hasta_id='+ftrHastaId+'&limit=999');
+  var parsedS = ss.map(function(s){return{tarih:s.tarih,agri:s.agri,islemler:parseIslemler(s.islemler)};});
+
+  g('ftr-result').style.display='none';
+  var btn = g('btn-ai-ftr');
+  btn.innerHTML='<span class="spin"></span>Program olusturuluyor...'; btn.disabled=true;
+  try {
+    var res = await api('/api/ai/ftr-program',{method:'POST',body:JSON.stringify({
+      hasta: h,
+      seanslar: parsedS,
+      secilen_islemler: ftrSelIslemler,
+      seans_sayisi: parseInt(g('ftr-seans-sayisi').value)||10,
+      baslangic_tarihi: g('ftr-baslangic').value,
+      ek_notlar: g('ftr-ek-not').value
+    })});
+    ftrDocText = res.program;
+    g('ftr-result-text').textContent = ftrDocText;
+    g('ftr-result').style.display='block';
+    g('ftr-result').scrollIntoView({behavior:'smooth',block:'start'});
+    toast('FTR programi olusturuldu!');
+  } catch(e){ toast('Hata: '+e.message,'err'); }
+  btn.innerHTML='📋 FTR Programi Olustur'; btn.disabled=false;
+}
+
+async function ftrKaydet() {
+  if(!ftrHastaId||!ftrDocText) return;
+  try {
+    await api('/api/ai_notlar',{method:'POST',body:JSON.stringify({
+      hasta_id:ftrHastaId, tip:'ftr_program', icerik:ftrDocText
+    })});
+    toast('FTR programi kaydedildi!');
+    if(g('ai-notlar-hasta').value===ftrHastaId) renderAiNotlar(ftrHastaId);
+  } catch(e){ toast('Kayit hatasi','err'); }
+}
+
+function ftrYazdir() {
+  if(!ftrDocText) return;
+  var muayenehane = 'Uzm. Dr. Zuhal Karakoyun Fizik Tedavi ve Rehabilitasyon Ozel Muayenehanesi';
+  var w = window.open('','_blank');
+  var css = 'body{font-family:Georgia,serif;color:#0f172a;padding:40px;font-size:13px;line-height:1.9;max-width:800px;margin:0 auto}'
+    +'h1{font-size:15px;font-weight:bold;text-align:center;border-bottom:2px solid #0ea5e9;padding-bottom:12px;margin-bottom:16px;color:#0284c7}'
+    +'.date{text-align:right;font-size:11px;color:#64748b;margin-bottom:20px}'
+    +'pre{white-space:pre-wrap;font-family:inherit;font-size:13px}'
+    +'@media print{body{padding:18px}}';
+  w.document.write('<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">'
+    +'<title>FTR Programi</title><style>'+css+'</style></head><body>'
+    +'<h1>'+muayenehane+'</h1>'
+    +'<div class="date">'+new Date().toLocaleDateString('tr-TR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+'</div>'
+    +'<pre>'+ftrDocText+'</pre></body></html>');
+  w.document.close();
+  setTimeout(function(){w.print();},400);
 }
 
 // ─── INIT ───────────────────────────────────────────────────────
@@ -1804,6 +2019,14 @@ function init() {
   g('btn-ai-doc-yazdir').addEventListener('click', aiYazdir);
   g('ai-notlar-hasta').addEventListener('change', function(){ renderAiNotlar(this.value); });
   hpInitAi();
+  // FTR Program
+  initFtrChips();
+  hpInitFtr();
+  g('btn-ai-ftr').addEventListener('click', aiFtrProgram);
+  g('btn-ftr-kaydet').addEventListener('click', ftrKaydet);
+  g('btn-ftr-yazdir').addEventListener('click', ftrYazdir);
+  // FTR baslangic tarihi bugune ayarla
+  g('ftr-baslangic').value = new Date().toISOString().split('T')[0];
 
   // Veri yükle
   g('sync-lbl').textContent='Bağlanıyor...';
