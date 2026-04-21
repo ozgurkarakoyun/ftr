@@ -1028,10 +1028,20 @@ async function renderDash() {
   var res=await Promise.all([api('/api/randevular?tarih='+today), api('/api/seanslar?limit=5')]);
   var tr=res[0], ts=res[1];
   g('db-r').innerHTML=tr.length?tr.sort(function(a,b){return a.saat.localeCompare(b.saat);}).map(function(r){
-    return '<div class="ri"><span class="rt">'+r.saat+'</span>'
-      +'<div style="flex:1"><div style="font-weight:700;font-size:13px">'+hAd(r.hasta_id)+'</div>'
-      +'<div style="font-size:11px;color:var(--tx2)">'+r.fiz+'</div></div>'+dBadge(r.durum)+'</div>';
+    var tamam=r.durum==='Tamamlandı', iptal=r.durum==='İptal';
+    return '<div class="ri" style="'+(iptal?'opacity:.55':'')+(tamam?'border-color:var(--gs)':'')+'">'
+      +'<span class="rt">'+r.saat+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+hAd(r.hasta_id)+'</div>'
+      +'<div style="font-size:11px;color:var(--tx2)">'+r.fiz+'</div></div>'
+      +'<div style="display:flex;align-items:center;gap:6px">'+dBadge(r.durum)
+      +(!tamam&&!iptal?'<button class="btn btn-sm btn-g" data-sgir="'+r.id+'" data-hid="'+r.hasta_id+'" data-tarih="'+r.tarih+'" data-saat="'+r.saat+'" data-fiz="'+r.fiz+'">⚡</button>':'')
+      +'</div></div>';
   }).join(''):'<div class="empty">Bugün randevu yok</div>';
+  g('db-r').querySelectorAll('[data-sgir]').forEach(function(b){
+    b.addEventListener('click', function(){
+      seansGir(b.dataset.hid, b.dataset.tarih, b.dataset.saat, b.dataset.fiz);
+    });
+  });
   g('db-s').innerHTML=ts.length?ts.map(function(s){
     var isls=parseIslemler(s.islemler);
     return '<div class="ri"><span class="rt" style="font-size:10px">'+fmtDate(s.tarih)+'</span>'
@@ -1101,6 +1111,26 @@ async function renderCal() {
   await renderRL();
 }
 
+
+// ─── RANDEVUDAN SEANS GİRİŞİ ────────────────────────────────────
+function seansGir(hastaId, tarih, saat, fiz) {
+  // Seans sekmesine git, formu doldur
+  navTo('seanslar');
+  // Hasta picker'ı doldur
+  hpReset('s');
+  hpSelect('s', hastaId);
+  // Tarih, saat, fiz
+  g('s-tarih').value = tarih;
+  g('s-saat').value = saat;
+  g('s-fiz').value = fiz || 'Fzt. 1';
+  // Scroll to form
+  setTimeout(function(){
+    var form = g('sec-seanslar');
+    if (form) form.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 100);
+  toast('Hasta seçildi — işlemleri seçip kaydedin');
+}
+
 async function renderRL() {
   var dr=await api('/api/randevular?tarih='+selDate);
   dr.sort(function(a,b){return a.saat.localeCompare(b.saat);});
@@ -1108,14 +1138,32 @@ async function renderRL() {
   var el=g('r-list');
   if(!dr.length){el.innerHTML='<div class="empty">Bu tarihe ait randevu yok</div>';return;}
   el.innerHTML=dr.map(function(r){
-    return '<div class="ri"><span class="rt">'+r.saat+'</span>'
-      +'<div style="flex:1"><div style="font-weight:700;font-size:13px">'+hAd(r.hasta_id)+'</div>'
-      +'<div style="font-size:11px;color:var(--tx2)">'+r.fiz+(r.not_?' · '+r.not_:'')+'</div></div>'
-      +'<div style="display:flex;align-items:center;gap:8px">'+dBadge(r.durum)
-      +'<button class="btn btn-sm btn-d" data-rid="'+r.id+'">Sil</button></div></div>';
+    var iptal = r.durum==='İptal';
+    var tamam = r.durum==='Tamamlandı';
+    return '<div class="ri" style="'+(iptal?'opacity:.55':'')+(tamam?'border-color:var(--gs)':'')+'">'
+      +'<div style="display:flex;flex-direction:column;align-items:center;min-width:46px">'
+      +'<span class="rt">'+r.saat+'</span>'
+      +'<span style="font-size:9px;color:var(--tx3);margin-top:2px">'+r.fiz.replace('Fzt. ','F')+'</span>'
+      +'</div>'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+hAd(r.hasta_id)+'</div>'
+      +'<div style="font-size:11px;color:var(--tx2);margin-top:1px">'+(r.not_||'—')+'</div>'
+      +'<div style="margin-top:4px">'+dBadge(r.durum)+'</div>'
+      +'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0">'
+      +(!tamam && !iptal
+        ? '<button class="btn btn-sm btn-g" data-sgir="'+r.id+'" data-hid="'+r.hasta_id+'" data-tarih="'+r.tarih+'" data-saat="'+r.saat+'" data-fiz="'+r.fiz+'">⚡ Seans Gir</button>'
+        : '')
+      +'<button class="btn btn-sm btn-d" data-rid="'+r.id+'">Sil</button>'
+      +'</div></div>';
   }).join('');
   el.querySelectorAll('[data-rid]').forEach(function(b){
     b.addEventListener('click', function(){ delRandevu(b.dataset.rid); });
+  });
+  el.querySelectorAll('[data-sgir]').forEach(function(b){
+    b.addEventListener('click', function(){
+      seansGir(b.dataset.hid, b.dataset.tarih, b.dataset.saat, b.dataset.fiz);
+    });
   });
 }
 
@@ -1143,6 +1191,15 @@ async function saveSeans() {
       hasta_id:hId,fiz:g('s-fiz').value,tarih:g('s-tarih').value,
       saat:g('s-saat').value,islemler:selIslArr,not_:g('s-not').value,agri:g('s-agri').value
     })});
+    // Aynı hasta + tarih + saat için bekleyen randevu varsa "Tamamlandı" yap
+    try {
+      var tarih=g('s-tarih').value, saat=g('s-saat').value;
+      var rdvList=await api('/api/randevular?hasta_id='+hId);
+      var eslesme=rdvList.filter(function(r){return r.tarih===tarih&&r.saat===saat&&r.durum==='Planlandı';});
+      for(var i=0;i<eslesme.length;i++){
+        await api('/api/randevular/'+eslesme[i].id+'/durum',{method:'PATCH',body:JSON.stringify({durum:'Tamamlandı'})});
+      }
+    } catch(e2){}
     selIslArr=[]; document.querySelectorAll('.chip').forEach(function(c){c.classList.remove('on');});
     g('s-not').value=''; g('s-agri').value=5; g('agri-v').textContent='5';
     hpReset('s'); await renderSW(); updateStats(); toast('Seans kaydedildi!');
