@@ -1,393 +1,1777 @@
-from flask import Flask, request, jsonify, render_template
-from flask_cors import CORS
-import sqlite3, os, uuid, json
-from datetime import datetime, timedelta
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FizTak — Fizik Tedavi Takip Sistemi</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f0f4f8;--surf:#fff;--surf2:#f8fafc;--bdr:#e2e8f0;
+  --acc:#0ea5e9;--acc2:#0284c7;--as:#e0f2fe;
+  --tx:#0f172a;--tx2:#475569;--tx3:#94a3b8;
+  --g:#10b981;--gs:#d1fae5;--w:#f59e0b;--ws:#fef3c7;
+  --d:#ef4444;--ds:#fee2e2;--p:#8b5cf6;
+  --sh:0 1px 3px rgba(0,0,0,.08),0 4px 16px rgba(0,0,0,.04);
+  --shl:0 8px 32px rgba(0,0,0,.12);--r:12px;--r2:8px;
+  --bot-nav:60px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;overflow-x:hidden}
+input,select,textarea,button{font-size:16px!important} /* prevent iOS zoom */
 
-app = Flask(__name__)
-CORS(app)
+/* ══ LAYOUT ══════════════════════════════════════════════════════ */
+.app{display:flex;min-height:100vh}
 
-DB_PATH = os.environ.get('DB_PATH', 'fiztак.db')
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+/* Desktop sidebar */
+.sb{width:230px;min-height:100vh;background:var(--tx);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;z-index:100}
+.sb-logo{padding:24px 20px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sb-brand{font-size:20px;font-weight:700;color:#fff;letter-spacing:-.5px}
+.sb-sub{font-size:11px;color:rgba(255,255,255,.4);margin-top:2px;letter-spacing:1px;text-transform:uppercase}
+.sb-nav{padding:14px 10px;flex:1}
+.ni{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--r2);color:rgba(255,255,255,.6);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:none;background:none;width:100%;text-align:left;margin-bottom:2px;font-family:'DM Sans',sans-serif;min-height:44px}
+.ni:hover{background:rgba(255,255,255,.08);color:#fff}
+.ni.act{background:var(--acc);color:#fff}
+.ni .ic{font-size:15px;width:18px;text-align:center}
+.sb-foot{padding:16px 20px;border-top:1px solid rgba(255,255,255,.08)}
+.sb-foot .lbl{font-size:11px;color:rgba(255,255,255,.5)}
+.sb-foot .sync{font-size:10px;color:rgba(255,255,255,.3);margin-top:3px}
+.main{margin-left:230px;flex:1;min-height:100vh}
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+/* Mobile bottom nav */
+.mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:var(--bot-nav);background:var(--surf);border-top:1px solid var(--bdr);z-index:200;align-items:stretch}
+.mn-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:none;color:var(--tx2);font-family:'DM Sans',sans-serif;font-size:10px;font-weight:500;cursor:pointer;padding:6px 2px;transition:color .15s;min-height:44px}
+.mn-btn .ic{font-size:20px;line-height:1}
+.mn-btn.act{color:var(--acc)}
+.mn-btn.act .ic{transform:scale(1.1)}
 
-def init_db():
-    conn = get_db()
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS hastalar (
-            id TEXT PRIMARY KEY, ad TEXT NOT NULL, soyad TEXT NOT NULL,
-            dogum TEXT, cins TEXT DEFAULT 'K', tel TEXT, email TEXT,
-            tani TEXT, slim INTEGER, fiz TEXT DEFAULT 'Fzt. 1',
-            anm TEXT, not_ TEXT, kt TEXT
-        );
-        CREATE TABLE IF NOT EXISTS randevular (
-            id TEXT PRIMARY KEY, hasta_id TEXT NOT NULL,
-            tarih TEXT NOT NULL, saat TEXT NOT NULL,
-            fiz TEXT, durum TEXT DEFAULT 'Planlandı', not_ TEXT,
-            FOREIGN KEY (hasta_id) REFERENCES hastalar(id)
-        );
-        CREATE TABLE IF NOT EXISTS seanslar (
-            id TEXT PRIMARY KEY, hasta_id TEXT NOT NULL, fiz TEXT,
-            tarih TEXT NOT NULL, saat TEXT, islemler TEXT,
-            not_ TEXT, agri INTEGER DEFAULT 5,
-            FOREIGN KEY (hasta_id) REFERENCES hastalar(id)
-        );
-        CREATE TABLE IF NOT EXISTS ai_notlar (
-            id TEXT PRIMARY KEY, hasta_id TEXT NOT NULL,
-            tip TEXT NOT NULL, icerik TEXT NOT NULL, olusturma TEXT NOT NULL,
-            FOREIGN KEY (hasta_id) REFERENCES hastalar(id)
-        );
-    ''')
-    conn.commit()
-    conn.close()
+/* Mobile topbar */
+.topbar{background:var(--surf);border-bottom:1px solid var(--bdr);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+.topbar-title{font-size:16px;font-weight:700}
+.topbar-date{font-size:11px;color:var(--tx2)}
+.content{padding:20px}
 
-# ─── HASTA ─────────────────────────────────────────────────────────────────
-@app.route('/api/hastalar', methods=['GET'])
-def get_hastalar():
-    q = request.args.get('q', '')
-    conn = get_db()
-    if q:
-        rows = conn.execute(
-            "SELECT * FROM hastalar WHERE ad||' '||soyad||' '||COALESCE(tani,'') LIKE ? ORDER BY ad",
-            (f'%{q}%',)).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM hastalar ORDER BY ad").fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+/* ══ CARDS & GRIDS ═══════════════════════════════════════════════ */
+.card{background:var(--surf);border-radius:var(--r);box-shadow:var(--sh);border:1px solid var(--bdr);margin-bottom:16px}
+.ch{padding:14px 16px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between}
+.ct{font-size:14px;font-weight:700}
+.cb{padding:16px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{background:var(--surf);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh);border:1px solid var(--bdr)}
+.stat-n{font-size:10px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px}
+.stat-v{font-size:26px;font-weight:700;margin-top:4px}
 
-@app.route('/api/hastalar', methods=['POST'])
-def add_hasta():
-    d = request.json
-    hid = str(uuid.uuid4())[:8]
-    conn = get_db()
-    conn.execute("INSERT INTO hastalar VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (hid, d['ad'], d['soyad'], d.get('dogum'), d.get('cins','K'),
-         d.get('tel'), d.get('email'), d.get('tani'), d.get('slim'),
-         d.get('fiz','Fzt. 1'), d.get('anm'), d.get('not_'), datetime.now().isoformat()))
-    conn.commit(); conn.close()
-    return jsonify({'id': hid}), 201
+/* ══ FORMS ════════════════════════════════════════════════════════ */
+.fg{display:flex;flex-direction:column;gap:6px}
+label{font-size:11px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.4px}
+input,select,textarea{width:100%;padding:11px 13px;border:1.5px solid var(--bdr);border-radius:var(--r2);font-family:'DM Sans',sans-serif;background:var(--surf2);color:var(--tx);outline:none;transition:border-color .15s;-webkit-appearance:none;appearance:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc);background:#fff}
+textarea{resize:vertical;min-height:72px;font-size:14px!important}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
 
-@app.route('/api/hastalar/<hid>', methods=['PUT'])
-def update_hasta(hid):
-    d = request.json
-    conn = get_db()
-    conn.execute("""UPDATE hastalar SET ad=?,soyad=?,dogum=?,cins=?,tel=?,email=?,
-        tani=?,slim=?,fiz=?,anm=?,not_=? WHERE id=?""",
-        (d['ad'],d['soyad'],d.get('dogum'),d.get('cins','K'),d.get('tel'),d.get('email'),
-         d.get('tani'),d.get('slim'),d.get('fiz','Fzt. 1'),d.get('anm'),d.get('not_'),hid))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+/* ══ BUTTONS ══════════════════════════════════════════════════════ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:10px 18px;border-radius:var(--r2);font-weight:600;cursor:pointer;border:1px solid var(--bdr);transition:all .15s;font-family:'DM Sans',sans-serif;background:transparent;color:var(--tx2);min-height:44px;white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn-p{background:var(--acc);color:#fff;border-color:transparent}
+.btn-p:active{background:var(--acc2)}
+.btn-g{background:var(--g);color:#fff;border-color:transparent}
+.btn-g:active{background:#059669}
+.btn-d{background:var(--d);color:#fff;border-color:transparent}
+.btn-sm{padding:7px 13px;min-height:36px}
 
-@app.route('/api/hastalar/<hid>', methods=['DELETE'])
-def delete_hasta(hid):
-    conn = get_db()
-    for tbl in ['seanslar','randevular','ai_notlar']:
-        conn.execute(f"DELETE FROM {tbl} WHERE hasta_id=?", (hid,))
-    conn.execute("DELETE FROM hastalar WHERE id=?", (hid,))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+/* ══ TABLES ═══════════════════════════════════════════════════════ */
+table{width:100%;border-collapse:collapse}
+th{font-size:10px;font-weight:700;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px;padding:8px 12px;text-align:left;border-bottom:2px solid var(--bdr);background:var(--surf2)}
+td{padding:10px 12px;border-bottom:1px solid var(--bdr);font-size:13px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 
-# ─── RANDEVU ───────────────────────────────────────────────────────────────
-@app.route('/api/randevular', methods=['GET'])
-def get_randevular():
-    tarih = request.args.get('tarih')
-    hasta_id = request.args.get('hasta_id')
-    conn = get_db()
-    sql = "SELECT * FROM randevular WHERE 1=1"
-    params = []
-    if tarih: sql += " AND tarih=?"; params.append(tarih)
-    if hasta_id: sql += " AND hasta_id=?"; params.append(hasta_id)
-    sql += " ORDER BY tarih,saat"
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+/* ══ BADGES & CHIPS ══════════════════════════════════════════════ */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:700}
+.b-b{background:var(--as);color:var(--acc2)}.b-g{background:var(--gs);color:#047857}.b-r{background:var(--ds);color:#b91c1c}
+.chip{display:inline-flex;align-items:center;padding:7px 14px;border-radius:100px;font-size:13px;font-weight:500;border:1.5px solid var(--bdr);background:var(--surf2);cursor:pointer;transition:all .12s;user-select:none;margin:3px;min-height:40px}
+.chip.on{background:var(--as);border-color:var(--acc);color:var(--acc2);font-weight:700}
 
-@app.route('/api/randevular', methods=['POST'])
-def add_randevu():
-    d = request.json
-    rid = str(uuid.uuid4())[:8]
-    conn = get_db()
-    conn.execute("INSERT INTO randevular VALUES (?,?,?,?,?,?,?)",
-        (rid, d['hasta_id'], d['tarih'], d['saat'],
-         d.get('fiz','Fzt. 1'), d.get('durum','Planlandı'), d.get('not_')))
-    conn.commit(); conn.close()
-    return jsonify({'id': rid}), 201
+/* ══ MODALS ═══════════════════════════════════════════════════════ */
+.ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)}
+.ov.open{display:flex}
+.mod{background:var(--surf);border-radius:20px 20px 0 0;width:100%;max-width:720px;max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;box-shadow:var(--shl);animation:mUp .25s ease}
+@keyframes mUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+.mh{padding:16px 20px 14px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--surf);z-index:1}
+.mt{font-size:16px;font-weight:700}
+.mc{background:none;border:none;font-size:22px;color:var(--tx2);cursor:pointer;padding:4px 8px;border-radius:8px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}
+.mb{padding:20px}
+.mf{padding:14px 20px;border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:10px;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+/* Modal drag handle */
+.mod::before{content:'';display:block;width:40px;height:4px;background:var(--bdr);border-radius:2px;margin:10px auto 0;flex-shrink:0}
 
-@app.route('/api/randevular/<rid>/durum', methods=['PATCH'])
-def update_randevu_durum(rid):
-    d = request.json
-    conn = get_db()
-    conn.execute("UPDATE randevular SET durum=? WHERE id=?", (d.get('durum','Tamamlandı'), rid))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+/* ══ TABS ════════════════════════════════════════════════════════ */
+.tabs{display:flex;border-bottom:2px solid var(--bdr);margin-bottom:16px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tb{padding:10px 16px;font-size:13px;font-weight:600;color:var(--tx2);background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .12s;font-family:'DM Sans',sans-serif;white-space:nowrap;min-height:44px}
+.tb.act{color:var(--acc);border-bottom-color:var(--acc)}
+.tp{display:none}.tp.act{display:block}
 
-@app.route('/api/randevular/<rid>', methods=['DELETE'])
-def delete_randevu(rid):
-    conn = get_db()
-    conn.execute("DELETE FROM randevular WHERE id=?", (rid,))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+/* ══ CALENDAR ═════════════════════════════════════════════════════ */
+.cal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-dh{text-align:center;font-size:10px;font-weight:700;color:var(--tx2);padding:4px 0;text-transform:uppercase}
+.cal-d{aspect-ratio:1;border-radius:var(--r2);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;border:1.5px solid transparent;position:relative;transition:background .1s}
+.cal-d:active{background:var(--surf2)}
+.cal-d.today{background:var(--as);color:var(--acc2);font-weight:700;border-color:var(--acc)}
+.cal-d.sel{background:var(--tx);color:var(--surf);font-weight:700}
+.cal-d.om{opacity:.3}
+.cal-dot{width:4px;height:4px;border-radius:50%;background:var(--acc);position:absolute;bottom:3px}
+.cal-d.sel .cal-dot{background:#fff}
 
-@app.route('/api/randevular/month', methods=['GET'])
-def randevu_month():
-    year = request.args.get('year')
-    month = request.args.get('month')
-    prefix = f"{year}-{month.zfill(2)}"
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT DISTINCT tarih FROM randevular WHERE tarih LIKE ?", (f'{prefix}%',)).fetchall()
-    conn.close()
-    return jsonify([r['tarih'] for r in rows])
+/* ══ LIST ITEMS ═══════════════════════════════════════════════════ */
+.ri{display:flex;align-items:center;gap:10px;padding:12px;border-radius:var(--r2);border:1px solid var(--bdr);margin-bottom:8px;background:var(--surf)}
+.rt{font-family:'DM Mono',monospace;font-size:12px;font-weight:500;color:var(--acc2);min-width:42px}
+.hk{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:var(--r2);border:1px solid var(--bdr);margin-bottom:8px;cursor:pointer;background:var(--surf)}
+.hk:active{background:var(--surf2)}
+.av{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0}
 
-# ─── SEANS ─────────────────────────────────────────────────────────────────
-@app.route('/api/seanslar', methods=['GET'])
-def get_seanslar():
-    hasta_id = request.args.get('hasta_id')
-    fiz = request.args.get('fiz')
-    bas = request.args.get('bas')
-    bit = request.args.get('bit')
-    limit = request.args.get('limit', 50)
-    conn = get_db()
-    sql = "SELECT * FROM seanslar WHERE 1=1"
-    params = []
-    if hasta_id: sql += " AND hasta_id=?"; params.append(hasta_id)
-    if fiz: sql += " AND fiz=?"; params.append(fiz)
-    if bas: sql += " AND tarih>=?"; params.append(bas)
-    if bit: sql += " AND tarih<=?"; params.append(bit)
-    sql += " ORDER BY tarih DESC, saat DESC LIMIT ?"
-    params.append(int(limit))
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+/* ══ TIMELINE ═════════════════════════════════════════════════════ */
+.tl{border-left:2px solid var(--bdr);padding-left:16px;margin-left:6px}
+.ti{position:relative;padding-bottom:14px}
+.td2{position:absolute;left:-23px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--acc);border:2px solid #fff;box-shadow:0 0 0 2px var(--acc)}
+.td3{font-size:11px;color:var(--tx3);margin-bottom:4px;font-weight:600}
+.tc{background:var(--surf2);border-radius:var(--r2);padding:10px;border:1px solid var(--bdr)}
 
-@app.route('/api/seanslar', methods=['POST'])
-def add_seans():
-    d = request.json
-    sid = str(uuid.uuid4())[:8]
-    conn = get_db()
-    conn.execute("INSERT INTO seanslar VALUES (?,?,?,?,?,?,?,?)",
-        (sid, d['hasta_id'], d.get('fiz','Fzt. 1'), d['tarih'], d.get('saat'),
-         json.dumps(d.get('islemler',[])), d.get('not_'), d.get('agri',5)))
-    conn.commit(); conn.close()
-    return jsonify({'id': sid}), 201
+/* ══ MISC ════════════════════════════════════════════════════════ */
+.empty{text-align:center;padding:32px 16px;color:var(--tx2);font-size:13px}
+.sec{display:none}.sec.act{display:block}
+.ibl{display:inline-block;padding:2px 9px;border-radius:100px;font-size:11px;font-weight:600;margin:2px}
+.prof{background:linear-gradient(135deg,var(--acc),var(--acc2));border-radius:var(--r);padding:18px;color:#fff;margin-bottom:16px}
+.pav{width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;margin-bottom:8px}
+.spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--tx);color:var(--surf);padding:10px 20px;border-radius:100px;font-size:13px;font-weight:500;z-index:9999;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1}
 
-@app.route('/api/seanslar/<sid>', methods=['DELETE'])
-def delete_seans(sid):
-    conn = get_db()
-    conn.execute("DELETE FROM seanslar WHERE id=?", (sid,))
-    conn.commit(); conn.close()
-    return jsonify({'ok': True})
+/* ══ HASTA PİCKER ═════════════════════════════════════════════════ */
+.hpicker{position:relative}
+.hp-wrap{position:relative}
+.hp-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:15px;pointer-events:none;color:var(--tx3);z-index:1}
+.hp-inp{padding-left:38px !important;cursor:pointer}
+.hp-clr{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:16px;color:var(--tx3);cursor:pointer;padding:4px 6px;border-radius:6px;display:none;z-index:1;min-width:36px;min-height:36px;display:none;align-items:center;justify-content:center}
+.hp-clr.vis{display:flex}
+.hp-clr:active{color:var(--d)}
+.hp-dd{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surf);border:1.5px solid var(--acc);border-radius:var(--r2);box-shadow:var(--shl);z-index:300;max-height:240px;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none}
+.hp-dd.open{display:block}
+.hp-opt{padding:12px 14px;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--bdr);min-height:52px}
+.hp-opt:last-child{border-bottom:none}
+.hp-opt:active{background:var(--as)}
+.hp-av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.hp-name{font-weight:600;font-size:14px}
+.hp-sub{font-size:12px;color:var(--tx2)}
+.hp-empty{padding:16px;text-align:center;font-size:13px;color:var(--tx2)}
 
-# ─── STATS ─────────────────────────────────────────────────────────────────
-@app.route('/api/stats', methods=['GET'])
-def get_stats():
-    today = datetime.now().strftime('%Y-%m-%d')
-    week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-    conn = get_db()
-    h_count = conn.execute("SELECT COUNT(*) as c FROM hastalar").fetchone()['c']
-    r_today = conn.execute("SELECT COUNT(*) as c FROM randevular WHERE tarih=?", (today,)).fetchone()['c']
-    s_week = conn.execute("SELECT COUNT(*) as c FROM seanslar WHERE tarih>=?", (week_ago,)).fetchone()['c']
-    s_total = conn.execute("SELECT COUNT(*) as c FROM seanslar").fetchone()['c']
-    conn.close()
-    return jsonify({'hastalar': h_count, 'randevu_bugun': r_today, 'seans_hafta': s_week, 'seans_toplam': s_total})
+/* ══ SLOT GRID ════════════════════════════════════════════════════ */
+.slot-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:2px}
+.slot{padding:10px 6px;border-radius:var(--r2);border:1.5px solid var(--bdr);cursor:pointer;text-align:center;background:var(--surf);min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.slot:active{background:var(--as)}
+.slot-sel{background:var(--acc) !important;border-color:var(--acc2) !important;color:#fff}
+.slot-full{background:var(--ds) !important;border-color:var(--d) !important;cursor:not-allowed;opacity:.75}
+.slot-warn{background:var(--ws);border-color:var(--w)}
+.slot-time{font-family:'DM Mono',monospace;font-size:14px;font-weight:600}
+.slot-cnt{font-size:10px;margin-top:3px;opacity:.75}
+.warn-bar{background:var(--ws);border:1px solid var(--w);color:#92400e;border-radius:var(--r2);padding:10px 14px;font-size:13px;font-weight:600;margin-top:8px;display:none;align-items:center;gap:8px}
+.warn-bar.show{display:flex}
 
-# ─── ANALİTİK ──────────────────────────────────────────────────────────────
-@app.route('/api/analitik', methods=['GET'])
-def get_analitik():
-    conn = get_db()
-    today = datetime.now().strftime('%Y-%m-%d')
-    week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-    month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-    next7 = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-    fourteen_ago = (datetime.now() - timedelta(days=13)).strftime('%Y-%m-%d')
+/* ══ RESPONSIVE ═══════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Hide desktop sidebar, show mobile nav */
+  .sb{display:none}
+  .mob-nav{display:flex}
+  .main{margin-left:0;padding-bottom:var(--bot-nav)}
+  .topbar{padding:12px 16px}
+  .topbar-date{display:none}
+  .content{padding:14px}
 
-    total_rdv = conn.execute("SELECT COUNT(*) as c FROM randevular WHERE tarih>=?", (month_ago,)).fetchone()['c']
-    done_rdv = conn.execute("SELECT COUNT(*) as c FROM randevular WHERE tarih>=? AND durum='Tamamlandı'", (month_ago,)).fetchone()['c']
-    cancelled_rdv = conn.execute("SELECT COUNT(*) as c FROM randevular WHERE tarih>=? AND durum='İptal'", (month_ago,)).fetchone()['c']
+  /* Stack all 2-col grids */
+  .g2,.g3,.g4{grid-template-columns:1fr 1fr}
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:1fr}
 
-    daily = conn.execute(
-        "SELECT tarih, COUNT(*) as cnt FROM seanslar WHERE tarih>=? GROUP BY tarih ORDER BY tarih", (fourteen_ago,)).fetchall()
+  /* Full-screen modals on mobile */
+  .ov{align-items:flex-end}
+  .mod{border-radius:20px 20px 0 0;width:100%;max-width:100%;max-height:95vh}
 
-    all_s = conn.execute("SELECT islemler FROM seanslar").fetchall()
-    ic = {}
-    for row in all_s:
-        try:
-            for i in json.loads(row['islemler'] or '[]'):
-                ic[i] = ic.get(i, 0) + 1
-        except: pass
-    top_islemler = sorted(ic.items(), key=lambda x: x[1], reverse=True)[:6]
+  /* Randevu section: stack calendar + list vertically */
+  .randevu-layout{grid-template-columns:1fr !important}
 
-    agri_trend = conn.execute(
-        "SELECT tarih, AVG(agri) as avg_agri FROM seanslar WHERE tarih>=? GROUP BY tarih ORDER BY tarih", (month_ago,)).fetchall()
+  /* Seans section: stack */
+  .seans-layout{grid-template-columns:1fr !important}
 
-    saat_dist = conn.execute(
-        "SELECT saat, COUNT(*) as cnt FROM randevular WHERE saat IS NOT NULL GROUP BY saat ORDER BY cnt DESC LIMIT 8").fetchall()
+  /* Rapor section: stack */
+  .rapor-layout{grid-template-columns:1fr !important}
 
-    hasta_seans = conn.execute("SELECT hasta_id, COUNT(*) as cnt FROM seanslar GROUP BY hasta_id").fetchall()
-    avg_seans = round(sum(r['cnt'] for r in hasta_seans)/len(hasta_seans),1) if hasta_seans else 0
+  /* Slot grid 4 cols on mobile for better fit */
+  .slot-grid{grid-template-columns:repeat(4,1fr);gap:6px}
+  .slot{padding:8px 4px;min-height:46px}
+  .slot-time{font-size:12px}
 
-    upcoming = conn.execute(
-        "SELECT tarih, COUNT(*) as cnt FROM randevular WHERE tarih>=? AND tarih<=? AND durum='Planlandı' GROUP BY tarih ORDER BY tarih",
-        (today, next7)).fetchall()
+  /* Hasta listesi actions: smaller */
+  .hk-actions{flex-direction:column;gap:4px}
 
-    risk = conn.execute("""
-        SELECT h.id, h.ad, h.soyad, h.tani, h.slim,
-               MAX(s.tarih) as son_seans, COUNT(s.id) as toplam_seans
-        FROM hastalar h LEFT JOIN seanslar s ON h.id=s.hasta_id
-        GROUP BY h.id HAVING son_seans < ? OR son_seans IS NULL
-        ORDER BY son_seans ASC LIMIT 5""", (week_ago,)).fetchall()
+  /* Topbar: hide + Yeni Hasta text on very small screens */
+  .btn-yh-lbl{display:none}
+}
+@media (max-width: 400px) {
+  .g2{grid-template-columns:1fr}
+  .slot-grid{grid-template-columns:repeat(3,1fr)}
+  .stat-v{font-size:22px}
+}
+@media (min-width: 769px) {
+  /* Desktop: modal centered, not bottom sheet */
+  .ov{align-items:center}
+  .mod{border-radius:16px;width:90%;max-height:90vh}
+  .mod::before{display:none}
+  .toast{bottom:24px}
+}
 
-    conn.close()
-    return jsonify({
-        'tamamlanma_orani': round(done_rdv/total_rdv*100,1) if total_rdv else 0,
-        'iptal_orani': round(cancelled_rdv/total_rdv*100,1) if total_rdv else 0,
-        'toplam_rdv_30gun': total_rdv,
-        'daily_seanslar': [{'tarih': r['tarih'], 'cnt': r['cnt']} for r in daily],
-        'top_islemler': [{'id': k, 'cnt': v} for k,v in top_islemler],
-        'agri_trend': [{'tarih': r['tarih'], 'avg': round(r['avg_agri'],1)} for r in agri_trend],
-        'en_yogun_saatler': [{'saat': r['saat'], 'cnt': r['cnt']} for r in saat_dist],
-        'avg_seans_per_hasta': avg_seans,
-        'upcoming_randevular': [{'tarih': r['tarih'], 'cnt': r['cnt']} for r in upcoming],
-        'risk_hastalar': [dict(r) for r in risk],
-    })
+/* ══ AI PANEL ════════════════════════════════════════════════════ */
+.ai-card{background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:var(--r);padding:20px;color:#fff;margin-bottom:16px}
+.ai-card-title{font-size:13px;font-weight:700;opacity:.7;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.ai-card-val{font-size:28px;font-weight:700}
+.ai-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:100px;font-size:12px;font-weight:600;background:rgba(255,255,255,.15);color:#fff;margin:3px}
+.ai-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:var(--r2);font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:'DM Sans',sans-serif;transition:all .15s;min-height:44px}
+.ai-btn-p{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff}
+.ai-btn-p:active{opacity:.85}
+.ai-btn-g{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
+.ai-btn-g:active{opacity:.85}
+.ai-btn-b{background:linear-gradient(135deg,#0284c7,#0ea5e9);color:#fff}
+.ai-btn-b:active{opacity:.85}
+.ai-btn-o{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff}
+.ai-btn-o:active{opacity:.85}
+.ai-result{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r2);padding:16px;font-size:13px;line-height:1.7;white-space:pre-wrap;margin-top:12px;max-height:320px;overflow-y:auto}
+.ai-result.loading{color:var(--tx2);font-style:italic}
+.ai-result.error{color:var(--d);background:var(--ds)}
+.chart-bar-wrap{display:flex;align-items:flex-end;gap:4px;height:80px;margin:8px 0}
+.chart-bar{flex:1;background:var(--acc);border-radius:4px 4px 0 0;min-width:12px;transition:height .3s;position:relative;cursor:pointer}
+.chart-bar:hover{opacity:.8}
+.chart-bar-lbl{font-size:9px;color:var(--tx3);text-align:center;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.risk-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r2);background:var(--ds);border:1px solid var(--d);margin-bottom:6px}
+.risk-dot{width:8px;height:8px;border-radius:50%;background:var(--d);flex-shrink:0}
+.anal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.anal-stat{background:var(--surf2);border-radius:var(--r2);padding:14px;text-align:center;border:1px solid var(--bdr)}
+.anal-stat-v{font-size:22px;font-weight:700;color:var(--acc)}
+.anal-stat-n{font-size:11px;color:var(--tx2);margin-top:3px}
+@media(max-width:768px){.anal-grid{grid-template-columns:repeat(2,1fr)}}
+.epikriz-preview{background:#fff;border:1px solid var(--bdr);border-radius:var(--r2);padding:20px;font-size:13px;line-height:1.8;white-space:pre-wrap;font-family:'Georgia',serif;max-height:400px;overflow-y:auto}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Desktop Sidebar -->
+  <nav class="sb">
+    <div class="sb-logo">
+      <div class="sb-brand">🏥 FizTak</div>
+      <div class="sb-sub">Fizik Tedavi Yönetimi</div>
+    </div>
+    <div class="sb-nav">
+      <button class="ni act" id="ni-dash"><span class="ic">📊</span>Dashboard</button>
+      <button class="ni" id="ni-hastalar"><span class="ic">👥</span>Hastalar</button>
+      <button class="ni" id="ni-randevular"><span class="ic">📅</span>Randevular</button>
+      <button class="ni" id="ni-seanslar"><span class="ic">⚡</span>Seans Girişi</button>
+      <button class="ni" id="ni-raporlar"><span class="ic">📋</span>Raporlar</button>
+      <button class="ni" id="ni-analitik"><span class="ic">📈</span>Analitik</button>
+      <button class="ni" id="ni-yapay-zeka"><span class="ic">🤖</span>Yapay Zeka</button>
+    </div>
+    <div class="sb-foot">
+      <div class="lbl">Railway • SQLite</div>
+      <div class="sync" id="sync-lbl">Bağlı</div>
+    </div>
+  </nav>
 
-# ─── AI NOTLAR ─────────────────────────────────────────────────────────────
-@app.route('/api/ai_notlar/<hid>', methods=['GET'])
-def get_ai_notlar(hid):
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM ai_notlar WHERE hasta_id=? ORDER BY olusturma DESC LIMIT 20", (hid,)).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+  <!-- Mobile Bottom Nav -->
+  <nav class="mob-nav">
+    <button class="mn-btn act" id="mn-dash"><span class="ic">📊</span>Dashboard</button>
+    <button class="mn-btn" id="mn-hastalar"><span class="ic">👥</span>Hastalar</button>
+    <button class="mn-btn" id="mn-randevular"><span class="ic">📅</span>Randevu</button>
+    <button class="mn-btn" id="mn-seanslar"><span class="ic">⚡</span>Seans</button>
+    <button class="mn-btn" id="mn-raporlar"><span class="ic">📋</span>Rapor</button>
+    <button class="mn-btn" id="mn-analitik"><span class="ic">📈</span>Analitik</button>
+    <button class="mn-btn" id="mn-yapay-zeka"><span class="ic">🤖</span>YZ</button>
+  </nav>
 
-@app.route('/api/ai_notlar', methods=['POST'])
-def save_ai_not():
-    d = request.json
-    nid = str(uuid.uuid4())[:8]
-    conn = get_db()
-    conn.execute("INSERT INTO ai_notlar VALUES (?,?,?,?,?)",
-        (nid, d['hasta_id'], d['tip'], d['icerik'], datetime.now().isoformat()))
-    conn.commit(); conn.close()
-    return jsonify({'id': nid}), 201
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="tb-title">Dashboard</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="topbar-date" id="tb-date"></span>
+        <button class="btn btn-p btn-sm" id="btn-yeni-hasta" style="gap:4px">
+          <span>+</span><span class="btn-yh-lbl">Yeni Hasta</span>
+        </button>
+      </div>
+    </div>
+    <div class="content">
 
-# ─── AI CORE ───────────────────────────────────────────────────────────────
-MUAYENEHANE = "Uzm. Dr. Zuhal Karakoyun Fizik Tedavi ve Rehabilitasyon Özel Muayenehanesi"
-SYSTEM_BASE = f"""Sen {MUAYENEHANE} için çalışan bir yapay zeka asistanısın.
-Fizik tedavi ve rehabilitasyon alanında uzman Türkçe yanıtlar verirsin.
-Yanıtların kısa, net ve klinik açıdan doğru olmalı."""
+      <div class="sec act" id="sec-dash">
+        <div class="g4">
+          <div class="stat"><div class="stat-n">Toplam Hasta</div><div class="stat-v" style="color:var(--acc)" id="st-h">—</div></div>
+          <div class="stat"><div class="stat-n">Bugün Randevu</div><div class="stat-v" style="color:var(--g)" id="st-r">—</div></div>
+          <div class="stat"><div class="stat-n">Bu Hafta Seans</div><div class="stat-v" style="color:var(--p)" id="st-sw">—</div></div>
+          <div class="stat"><div class="stat-n">Toplam Seans</div><div class="stat-v" id="st-st">—</div></div>
+        </div>
+        <div class="g2 dash-layout">
+          <div class="card">
+            <div class="ch"><span class="ct">📅 Bugünkü Randevular</span><button class="btn btn-sm" id="btn-dash-r">Tümü →</button></div>
+            <div class="cb" id="db-r"><div class="empty">Yükleniyor...</div></div>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="ct">⚡ Son Seanslar</span><button class="btn btn-sm" id="btn-dash-s">Tümü →</button></div>
+            <div class="cb" id="db-s"><div class="empty">Yükleniyor...</div></div>
+          </div>
+        </div>
+      </div>
 
-def call_claude(system_prompt, user_prompt, max_tokens=1200):
-    import urllib.request, urllib.error
-    if not ANTHROPIC_API_KEY:
-        raise Exception("ANTHROPIC_API_KEY ayarlanmamış")
-    payload = json.dumps({
-        "model": "claude-sonnet-4-5",
-        "max_tokens": max_tokens,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}]
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        'https://api.anthropic.com/v1/messages',
-        data=payload,
-        headers={'Content-Type':'application/json','x-api-key':ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-        method='POST')
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode('utf-8'))
-    return data['content'][0]['text']
+      <div class="sec" id="sec-hastalar">
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+          <input type="text" id="h-search" placeholder="Hasta ara..." style="flex:1">
+          <button class="btn btn-p btn-sm" id="btn-hasta-ekle" style="white-space:nowrap;flex-shrink:0">+ Hasta</button>
+        </div>
+        <div id="h-list"><div class="empty">Yükleniyor...</div></div>
+      </div>
 
-@app.route('/api/ai/seans-notu', methods=['POST'])
-def ai_seans_notu():
-    d = request.json
-    hasta = d.get('hasta', {})
-    seans = d.get('seans', {})
-    system = SYSTEM_BASE + "\nGörev: Kısa seans notu yaz. Tıbbi terminoloji kullan. Maksimum 3 cümle."
-    user = f"""Hasta: {hasta.get('ad','')} {hasta.get('soyad','')} | Tanı: {hasta.get('tani','—')}
-Uygulanan: {', '.join(seans.get('islemler',[]))} | Ağrı: {seans.get('agri','—')}/10
-Fizyoterapist notu: {seans.get('not_','—')}
-Klinik seans notu yaz."""
-    try:
-        return jsonify({'not': call_claude(system, user, 350)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+      <div class="sec" id="sec-randevular">
+        <div class="g2 randevu-layout" style="align-items:start">
+          <div class="card">
+            <div class="cb">
+              <div class="cal-hdr">
+                <button class="btn btn-sm" id="btn-cal-prev">‹</button>
+                <strong style="font-size:14px" id="cal-label"></strong>
+                <button class="btn btn-sm" id="btn-cal-next">›</button>
+              </div>
+              <div class="cal-g" id="cal-grid"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="ct" id="r-hdr">Randevular</span><button class="btn btn-p btn-sm" id="btn-randevu-ekle">+ Ekle</button></div>
+            <div class="cb" id="r-list"><div class="empty">Gün seçin</div></div>
+          </div>
+        </div>
+      </div>
 
-@app.route('/api/ai/epikriz', methods=['POST'])
-def ai_epikriz():
-    d = request.json
-    hasta = d.get('hasta', {})
-    seanslar = d.get('seanslar', [])
-    agri_list = [s.get('agri',5) for s in seanslar if s.get('agri') is not None]
-    islem_set = set()
-    for s in seanslar:
-        for i in (s.get('islemler') or []): islem_set.add(i)
-    system = SYSTEM_BASE + f"""\nGörev: Resmi hasta epikriz belgesi yaz.
-Şu başlıkları kullan: HASTA BİLGİLERİ, TEDAVİ SÜRECİ, UYGULANAN TEDAVİLER, SONUÇ VE ÖNERİLER.
-Belge başlığında şunu kullan: {MUAYENEHANE}
-Türkçe, profesyonel tıbbi dil."""
-    user = f"""Hasta: {hasta.get('ad','')} {hasta.get('soyad','')}
-Doğum: {hasta.get('dogum','—')} | Cinsiyet: {'Kadın' if hasta.get('cins')=='K' else 'Erkek'}
-Tanı: {hasta.get('tani','—')}
-Toplam seans: {len(seanslar)}
-İlk seans: {seanslar[-1].get('tarih','—') if seanslar else '—'} | Son: {seanslar[0].get('tarih','—') if seanslar else '—'}
-Uygulanan işlemler: {', '.join(islem_set) or '—'}
-Başlangıç ağrı: {agri_list[-1] if agri_list else '—'}/10 → Bitiş ağrı: {agri_list[0] if agri_list else '—'}/10
-Anamnez: {hasta.get('anm','—')}
-Epikriz yaz."""
-    try:
-        return jsonify({'epikriz': call_claude(system, user, 900)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+      <div class="sec" id="sec-seanslar">
+        <div class="g2 seans-layout" style="align-items:start">
+          <div class="card">
+            <div class="ch"><span class="ct">⚡ Yeni Seans Girişi</span></div>
+            <div class="cb">
+              <div style="display:flex;flex-direction:column;gap:14px">
+                <div class="g2">
+                  <div class="fg">
+                    <label>Hasta</label>
+                    <div class="hpicker">
+                      <div class="hp-wrap">
+                        <span class="hp-icon">🔍</span>
+                        <input class="hp-inp" id="hp-s-inp" placeholder="Hasta ara..." autocomplete="off" readonly>
+                        <button class="hp-clr" id="hp-s-clr" type="button" tabindex="-1">✕</button>
+                      </div>
+                      <div class="hp-dd" id="hp-s-dd"></div>
+                    </div>
+                    <input type="hidden" id="s-hasta">
+                  </div>
+                  <div class="fg"><label>Fizyoterapist</label>
+                    <select id="s-fiz"><option value="Fzt. 1">Fzt. 1</option><option value="Fzt. 2">Fzt. 2</option></select>
+                  </div>
+                </div>
+                <div class="g2">
+                  <div class="fg"><label>Tarih</label><input type="date" id="s-tarih"></div>
+                  <div class="fg"><label>Saat</label><input type="time" id="s-saat"></div>
+                </div>
+                <div class="fg"><label>Uygulanan İşlemler</label><div id="islem-chips" style="margin-top:4px"></div></div>
+                <div class="fg">
+                  <label>Ağrı Skoru: <strong id="agri-v">5</strong>/10</label>
+                  <input type="range" id="s-agri" min="0" max="10" value="5" step="1">
+                </div>
+                <div class="fg"><label>Seans Notu</label><textarea id="s-not" placeholder="Hasta tepkisi, gözlemler..."></textarea></div>
+                <button class="btn btn-g" style="width:100%" id="seans-btn">✓ Seansı Kaydet</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="ct">Son Seanslar</span></div>
+            <div class="cb" id="s-widget" style="max-height:500px;overflow-y:auto"><div class="empty">Yükleniyor...</div></div>
+          </div>
+        </div>
+      </div>
 
-@app.route('/api/ai/randevu-oneri', methods=['POST'])
-def ai_randevu_oneri():
-    d = request.json
-    hasta = d.get('hasta', {})
-    seanslar = d.get('seanslar', [])
-    rdvlar = d.get('randevular', [])
-    system = SYSTEM_BASE + """\nGörev: Hasta için akıllı randevu önerileri ver.
-Maddeler halinde: optimal seans sıklığı, risk faktörleri, önerilen sonraki randevu tarihi, uyarılar."""
-    iptal_say = sum(1 for r in rdvlar if r.get('durum')=='İptal')
-    user = f"""Hasta: {hasta.get('ad','')} {hasta.get('soyad','')} | Tanı: {hasta.get('tani','—')}
-Önerilen toplam seans: {hasta.get('slim','—')} | Tamamlanan: {len(seanslar)}
-Son seans: {seanslar[0].get('tarih','—') if seanslar else 'Yok'}
-Son 30 günde iptal: {iptal_say}
-Randevu ve tedavi sıklığı önerisi ver."""
-    try:
-        return jsonify({'oneri': call_claude(system, user, 500)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+      <div class="sec" id="sec-raporlar">
+        <div class="g2 rapor-layout" style="align-items:start">
+          <div class="card">
+            <div class="ch"><span class="ct">🔎 Rapor Filtresi</span></div>
+            <div class="cb">
+              <div style="display:flex;flex-direction:column;gap:13px">
+                <div class="fg"><label>Hasta</label><select id="rap-h"><option value="">Tüm hastalar</option></select></div>
+                <div class="fg"><label>Başlangıç</label><input type="date" id="rap-b"></div>
+                <div class="fg"><label>Bitiş</label><input type="date" id="rap-e"></div>
+                <div class="fg"><label>Fizyoterapist</label>
+                  <select id="rap-f"><option value="">Tümü</option><option value="Fzt. 1">Fzt. 1</option><option value="Fzt. 2">Fzt. 2</option></select>
+                </div>
+                <button class="btn btn-p" style="width:100%" id="btn-rapor-getir">Raporu Getir</button>
+                <button class="btn" style="width:100%;color:var(--p);border-color:var(--p)" id="btn-rapor-yazdir">🖨️ PDF / Yazdır</button>
+              </div>
+            </div>
+          </div>
+          <div id="rap-content"><div class="card"><div class="cb"><div class="empty">📋 Filtre seçip raporu getirin</div></div></div></div>
+        </div>
+      </div>
 
-@app.route('/api/ai/tedavi-protokol', methods=['POST'])
-def ai_tedavi_protokol():
-    d = request.json
-    system = SYSTEM_BASE + """\nGörev: Tanıya göre fizik tedavi protokolü öner.
-Maddeler: önerilen modaliteler, seans sıklığı, toplam seans, ev egzersizleri, kontrindikasyonlar."""
-    user = f"Tanı: {d.get('tani','')}\nEk bilgi: {d.get('hasta_bilgi','')}\nProtokol öner."
-    try:
-        return jsonify({'protokol': call_claude(system, user, 600)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/ai/ilerleme-analiz', methods=['POST'])
-def ai_ilerleme_analiz():
-    d = request.json
-    hasta = d.get('hasta', {})
-    seanslar = d.get('seanslar', [])
-    system = SYSTEM_BASE + "\nGörev: Hasta tedavi ilerlemesini analiz et. Ağrı trendini, seans düzenliliğini, tedavi etkinliğini değerlendir. Maksimum 4 cümle."
-    ozet = '\n'.join(f"{s.get('tarih','')}: Ağrı {s.get('agri','?')}/10" for s in seanslar[:10])
-    user = f"Hasta: {hasta.get('ad','')} {hasta.get('soyad','')} | Tanı: {hasta.get('tani','—')}\nSeanslar:\n{ozet or 'Yok'}\nİlerleme analizi yap."
-    try:
-        return jsonify({'analiz': call_claude(system, user, 400)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+      <!-- ANALİTİK -->
+      <div class="sec" id="sec-analitik">
+        <div class="anal-grid">
+          <div class="anal-stat"><div class="anal-stat-v" id="an-tamamlanma">—</div><div class="anal-stat-n">Tamamlanma Oranı %</div></div>
+          <div class="anal-stat"><div class="anal-stat-v" id="an-iptal" style="color:var(--d)">—</div><div class="anal-stat-n">İptal Oranı %</div></div>
+          <div class="anal-stat"><div class="anal-stat-v" id="an-avg-seans" style="color:var(--g)">—</div><div class="anal-stat-n">Ort. Seans/Hasta</div></div>
+        </div>
+        <div class="g2" style="align-items:start">
+          <div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="ch"><span class="ct">📅 Gelecek 7 Gün</span></div>
+              <div class="cb" id="an-upcoming"><div class="empty">Yükleniyor...</div></div>
+            </div>
+            <div class="card">
+              <div class="ch"><span class="ct">⚡ Son 14 Gün Seans</span></div>
+              <div class="cb">
+                <div class="chart-bar-wrap" id="an-daily-chart"></div>
+                <div id="an-daily-lbls" style="display:flex;gap:4px"></div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="ch"><span class="ct">🕐 En Yoğun Saatler</span></div>
+              <div class="cb" id="an-saatler"><div class="empty">Yükleniyor...</div></div>
+            </div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="ch"><span class="ct">🔧 En Çok Uygulanan</span></div>
+              <div class="cb" id="an-islemler"><div class="empty">Yükleniyor...</div></div>
+            </div>
+            <div class="card">
+              <div class="ch"><span class="ct" style="color:var(--d)">⚠️ Risk Altındaki Hastalar</span></div>
+              <div class="cb" id="an-risk"><div class="empty">Yükleniyor...</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+      <!-- YAPAY ZEKA -->
+      <div class="sec" id="sec-yapay-zeka">
+        <div class="ai-card" style="margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <span style="font-size:28px">🤖</span>
+            <div>
+              <div style="font-size:16px;font-weight:700">Yapay Zeka Asistanı</div>
+              <div style="font-size:12px;opacity:.7">Uzm. Dr. Zuhal Karakoyun Muayenehanesi</div>
+            </div>
+          </div>
+          <div style="font-size:12px;opacity:.65">Claude AI destekli klinik karar destek sistemi</div>
+        </div>
 
-if __name__ == '__main__':
-    init_db()
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+        <div class="g2" style="align-items:start">
+          <!-- Sol kolon: Döküman Üretimi -->
+          <div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="ch"><span class="ct">📄 Otomatik Döküman</span></div>
+              <div class="cb">
+                <div class="fg" style="margin-bottom:14px">
+                  <label>Hasta Seç</label>
+                  <div class="hpicker">
+                    <div class="hp-wrap">
+                      <span class="hp-icon">🔍</span>
+                      <input class="hp-inp" id="hp-ai-inp" placeholder="Hasta ara..." autocomplete="off" readonly>
+                      <button class="hp-clr" id="hp-ai-clr" type="button" tabindex="-1">✕</button>
+                    </div>
+                    <div class="hp-dd" id="hp-ai-dd"></div>
+                  </div>
+                  <input type="hidden" id="ai-hasta-id">
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+                  <button class="ai-btn ai-btn-p" id="btn-ai-seans-notu">📝 Seans Notu</button>
+                  <button class="ai-btn ai-btn-b" id="btn-ai-epikriz">📋 Epikriz</button>
+                  <button class="ai-btn ai-btn-g" id="btn-ai-randevu-oneri">📅 Randevu Önerisi</button>
+                  <button class="ai-btn ai-btn-o" id="btn-ai-ilerleme">📊 İlerleme Analizi</button>
+                </div>
+                <div id="ai-doc-result" style="display:none">
+                  <div class="epikriz-preview" id="ai-doc-text"></div>
+                  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                    <button class="ai-btn ai-btn-p" id="btn-ai-doc-kaydet" style="font-size:12px;padding:8px 14px">💾 Kaydet</button>
+                    <button class="ai-btn" id="btn-ai-doc-yazdir" style="font-size:12px;padding:8px 14px;border:1px solid var(--bdr)">🖨️ Yazdır</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="ch"><span class="ct">🧪 Tedavi Protokolü</span></div>
+              <div class="cb">
+                <div class="fg" style="margin-bottom:10px">
+                  <label>Tanı / Şikayet</label>
+                  <input type="text" id="ai-protokol-tani" placeholder="Örn: Lumbar disk hernisi, omuz ağrısı...">
+                </div>
+                <div class="fg" style="margin-bottom:12px">
+                  <label>Ek Bilgi (isteğe bağlı)</label>
+                  <input type="text" id="ai-protokol-bilgi" placeholder="Yaş, eşlik eden hastalık...">
+                </div>
+                <button class="ai-btn ai-btn-p" id="btn-ai-protokol" style="width:100%">🤖 Protokol Oluştur</button>
+                <div class="ai-result" id="ai-protokol-result" style="display:none"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sağ kolon: Geçmiş Notlar -->
+          <div>
+            <div class="card">
+              <div class="ch">
+                <span class="ct">📚 Kayıtlı AI Notlar</span>
+                <select id="ai-notlar-hasta" style="width:auto;font-size:12px;padding:5px 10px">
+                  <option value="">Hasta seçin...</option>
+                </select>
+              </div>
+              <div class="cb" id="ai-notlar-list" style="max-height:520px;overflow-y:auto">
+                <div class="empty">Hasta seçin</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HASTA MODAL -->
+<div class="ov" id="ov-hasta">
+  <div class="mod" style="max-width:720px">
+    <div class="mh"><span class="mt" id="hm-t">Yeni Hasta</span><button class="mc" id="hm-close">✕</button></div>
+    <div class="mb">
+      <div class="tabs">
+        <button class="tb act" id="tb-ki">👤 Kişisel</button>
+        <button class="tb" id="tb-ti">🏥 Tıbbi</button>
+        <button class="tb" id="tb-rd">📅 Randevu</button>
+      </div>
+      <!-- KİŞİSEL -->
+      <div class="tp act" id="tp-ki">
+        <div style="display:flex;flex-direction:column;gap:13px">
+          <div class="g2">
+            <div class="fg"><label>Ad</label><input id="h-ad" placeholder="Ad"></div>
+            <div class="fg"><label>Soyad</label><input id="h-soyad" placeholder="Soyad"></div>
+          </div>
+          <div class="g3">
+            <div class="fg"><label>Doğum Tarihi</label><input type="date" id="h-dogum"></div>
+            <div class="fg"><label>Cinsiyet</label><select id="h-cins"><option value="K">Kadın</option><option value="E">Erkek</option></select></div>
+            <div class="fg"><label>Telefon</label><input id="h-tel" placeholder="05xx..."></div>
+          </div>
+          <div class="fg"><label>E-posta</label><input type="email" id="h-email" placeholder="ornek@mail.com"></div>
+        </div>
+      </div>
+      <!-- TIBBİ -->
+      <div class="tp" id="tp-ti">
+        <div style="display:flex;flex-direction:column;gap:13px">
+          <div class="fg"><label>Tanı / Şikayet</label><input id="h-tani" placeholder="Lumbar disk hernisi..."></div>
+          <div class="g2">
+            <div class="fg"><label>Önerilen Seans</label><input type="number" id="h-slim" placeholder="10" min="1"></div>
+            <div class="fg"><label>Fizyoterapist</label><select id="h-fiz"><option value="Fzt. 1">Fzt. 1</option><option value="Fzt. 2">Fzt. 2</option></select></div>
+          </div>
+          <div class="fg"><label>Anamnez / Öykü</label><textarea id="h-anm" placeholder="Geçmiş rahatsızlıklar, ilaçlar..."></textarea></div>
+          <div class="fg"><label>Notlar</label><textarea id="h-not" placeholder="Ek notlar..."></textarea></div>
+        </div>
+      </div>
+      <!-- RANDEVU SEKMESİ -->
+      <div class="tp" id="tp-rd">
+        <div id="hr-uyari" style="background:var(--ws);border:1px solid var(--w);color:#92400e;border-radius:var(--r2);padding:12px 16px;font-size:13px;display:none">
+          ⚠️ Randevu eklemek için önce hastayı kaydedin, ardından bu sekmeye dönün.
+        </div>
+        <div id="hr-form" style="display:none;flex-direction:column;gap:14px">
+          <div style="background:var(--as);border-radius:var(--r2);padding:10px 14px;font-size:13px;color:var(--acc2);font-weight:600" id="hr-hasta-lbl"></div>
+          <div class="g2">
+            <div class="fg"><label>Tarih</label><input type="date" id="hr-tarih"></div>
+            <div class="fg"><label>Fizyoterapist</label>
+              <select id="hr-fiz"><option value="Fzt. 1">Fzt. 1</option><option value="Fzt. 2">Fzt. 2</option></select>
+            </div>
+          </div>
+          <div class="fg">
+            <label>Saat Seçin</label>
+            <div class="slot-grid" id="hr-slot-grid">
+              <div style="grid-column:span 3;text-align:center;padding:20px;font-size:12px;color:var(--tx2)">Tarih seçince slotlar yüklenir</div>
+            </div>
+            <div class="warn-bar" id="hr-slot-warn">⚠️ <span id="hr-slot-warn-txt"></span></div>
+            <input type="hidden" id="hr-saat">
+          </div>
+          <div class="g2">
+            <div class="fg"><label>Durum</label>
+              <select id="hr-durum"><option value="Planlandı">Planlandı</option><option value="Tamamlandı">Tamamlandı</option><option value="İptal">İptal</option></select>
+            </div>
+            <div class="fg"><label>Not</label><input id="hr-not" placeholder="Randevu notu..."></div>
+          </div>
+          <button class="btn btn-p" style="width:100%" id="hr-ekle-btn">+ Randevu Ekle</button>
+          <div id="hr-list"></div>
+        </div>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn" id="hm-iptal">İptal</button>
+      <button class="btn btn-p" id="hm-btn">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- RANDEVU MODAL -->
+<div class="ov" id="ov-randevu">
+  <div class="mod" style="max-width:700px">
+    <div class="mh"><span class="mt">Randevu Ekle</span><button class="mc" id="rm-close">✕</button></div>
+    <div class="mb">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="fg">
+          <label>Hasta</label>
+          <div class="hpicker">
+            <div class="hp-wrap">
+              <span class="hp-icon">🔍</span>
+              <input class="hp-inp" id="hp-r-inp" placeholder="Hasta ara..." autocomplete="off" readonly>
+              <button class="hp-clr" id="hp-r-clr" type="button" tabindex="-1">✕</button>
+            </div>
+            <div class="hp-dd" id="hp-r-dd"></div>
+          </div>
+          <input type="hidden" id="r-hasta">
+        </div>
+        <div class="g2">
+          <div class="fg"><label>Tarih</label><input type="date" id="r-tarih"></div>
+          <div class="fg"><label>Fizyoterapist</label>
+            <select id="r-fiz"><option value="Fzt. 1">Fzt. 1</option><option value="Fzt. 2">Fzt. 2</option></select>
+          </div>
+        </div>
+        <div class="fg">
+          <label>Saat Seçin</label>
+          <div class="slot-grid" id="slot-grid">
+            <div style="grid-column:span 3;text-align:center;padding:20px;font-size:12px;color:var(--tx2)">Tarih seçince slotlar yüklenir</div>
+          </div>
+          <div class="warn-bar" id="slot-warn">⚠️ <span id="slot-warn-txt"></span></div>
+          <input type="hidden" id="r-saat">
+        </div>
+        <div class="g2">
+          <div class="fg"><label>Durum</label>
+            <select id="r-durum"><option value="Planlandı">Planlandı</option><option value="Tamamlandı">Tamamlandı</option><option value="İptal">İptal</option></select>
+          </div>
+          <div class="fg"><label>Not</label><input id="r-not" placeholder="Randevu notu..."></div>
+        </div>
+      </div>
+    </div>
+    <div class="mf">
+      <button class="btn" id="rm-iptal">İptal</button>
+      <button class="btn btn-p" id="rm-btn">Kaydet</button>
+    </div>
+  </div>
+</div>
+
+<!-- DETAY MODAL -->
+<div class="ov" id="ov-detay">
+  <div class="mod" style="max-width:760px">
+    <div class="mh">
+      <span class="mt" id="det-title">Hasta Detayı</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" id="det-edit">Düzenle</button>
+        <button class="mc" id="det-close">✕</button>
+      </div>
+    </div>
+    <div class="mb" id="det-body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── STATE (var kullanılıyor, let/const çakışması yok) ───────────
+var hastalar = [];
+var editHId = null;
+var selIslArr = [];
+var calY = new Date().getFullYear();
+var calM = new Date().getMonth();
+var selDate = new Date().toISOString().split('T')[0];
+var calHasR = {};
+var slotCounts = {};
+var chosenSlot = null;          // ← "selSlot" değil, fonksiyonla çakışmaz
+var pickerVal = { s: null, r: null };
+
+var ISLEMLER = [
+  {id:'SIS',l:'SİS',c:'#0ea5e9'},{id:'HIL',l:'HIL',c:'#8b5cf6'},
+  {id:'ESWT',l:'ESWT',c:'#ef4444'},{id:'KINEZIO',l:'Kinezyo Bant',c:'#f59e0b'},
+  {id:'INFRARUJ',l:'İnfraruj',c:'#f97316'},{id:'TENS',l:'TENS',c:'#10b981'},
+  {id:'PARAFIN',l:'Parafin',c:'#ec4899'},{id:'LIPODEM',l:'Lipödem Ted.',c:'#14b8a6'},
+  {id:'BANDAJ',l:'Bandajlama',c:'#6366f1'},{id:'SKOLYOZ',l:'Skolyoz Egz.',c:'#84cc16'},
+  {id:'EGZERSIZ',l:'Egzersiz',c:'#22c55e'},{id:'KONTRAS',l:'Kontrast Banyo',c:'#3b82f6'}
+];
+var AVC = ['#0ea5e9','#8b5cf6','#10b981','#f59e0b','#ef4444','#ec4899','#14b8a6'];
+var MAX_PER_SLOT = 4;
+var ALL_SLOTS = (function(){
+  var a = [];
+  for (var h = 9; h <= 19; h++) {
+    a.push((h<10?'0':'')+h+':00');
+    a.push((h<10?'0':'')+h+':30');
+  }
+  return a;
+})();
+
+// ─── HELPERS ─────────────────────────────────────────────────────
+function avColor(n){ var h=0; for(var i=0;i<n.length;i++) h+=n.charCodeAt(i); return AVC[h%AVC.length]; }
+function fmtDate(d){ if(!d)return''; var p=d.split('-'); return p[2]+'.'+p[1]+'.'+p[0]; }
+function calcAge(d){ if(!d)return''; return Math.floor((Date.now()-new Date(d).getTime())/(365.25*24*3600*1000))+'y'; }
+function dBadge(d){ return d==='Tamamlandı'?'<span class="badge b-g">Tamamlandı</span>':d==='İptal'?'<span class="badge b-r">İptal</span>':'<span class="badge b-b">Planlandı</span>'; }
+function iLabel(id){ var x=ISLEMLER.find(function(i){return i.id===id;}); return x?'<span class="ibl" style="background:'+x.c+'22;color:'+x.c+';border:1px solid '+x.c+'44">'+x.l+'</span>':''; }
+function hAd(id){ var h=hastalar.find(function(x){return x.id===id;}); return h?h.ad+' '+h.soyad:'—'; }
+function parseIslemler(v){ try{return typeof v==='string'?JSON.parse(v):v;}catch(e){return[];} }
+function g(id){ return document.getElementById(id); }
+
+async function api(path, opts) {
+  var r = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function toast(msg, type) {
+  var t = g('toast');
+  t.textContent = msg;
+  t.style.background = type==='err'?'#b91c1c':type==='warn'?'#b45309':'var(--tx)';
+  t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 3000);
+}
+
+function openModal(id){ g(id).classList.add('open'); }
+function closeModal(id){ g(id).classList.remove('open'); }
+
+// ─── NAVIGATION ──────────────────────────────────────────────────
+var NAV_TITLES = {dash:'Dashboard',hastalar:'Hastalar',randevular:'Randevular',seanslar:'Seans Girişi',raporlar:'Raporlar','analitik':'Analitik & Öngörü','yapay-zeka':'Yapay Zeka Asistanı'};
+
+function navTo(s) {
+  document.querySelectorAll('.sec').forEach(function(x){ x.classList.remove('act'); });
+  g('sec-'+s).classList.add('act');
+  document.querySelectorAll('.ni').forEach(function(b){ b.classList.remove('act'); });
+  g('ni-'+s).classList.add('act');
+  // sync mobile nav
+  document.querySelectorAll('.mn-btn').forEach(function(b){ b.classList.remove('act'); });
+  var mn = g('mn-'+s);
+  if (mn) mn.classList.add('act');
+  g('tb-title').textContent = NAV_TITLES[s];
+  // scroll to top on mobile
+  window.scrollTo({top:0,behavior:'smooth'});
+  if (s==='dash') renderDash();
+  if (s==='hastalar') { updateRaporSel(); renderH(); }
+  if (s==='randevular') { updateRaporSel(); renderCal(); }
+  if (s==='seanslar') { updateRaporSel(); renderSW(); }
+  if (s==='raporlar') updateRaporSel();
+  if (s==='analitik') renderAnalitik();
+  if (s==='yapay-zeka') { updateAiNotlarSel(); }
+}
+
+// ─── HASTA PİCKER ────────────────────────────────────────────────
+// key: 's' = seans, 'r' = randevu
+function hpInpId(k){ return 'hp-'+k+'-inp'; }
+function hpClrId(k){ return 'hp-'+k+'-clr'; }
+function hpDdId(k){ return 'hp-'+k+'-dd'; }
+function hpHidId(k){ return k==='s'?'s-hasta':'r-hasta'; }
+
+function hpBuildDD(k, filter) {
+  filter = (filter||'').toLowerCase();
+  var dd = g(hpDdId(k));
+  var fl = hastalar.filter(function(h){ return (h.ad+' '+h.soyad+' '+(h.tani||'')).toLowerCase().indexOf(filter)!==-1; }).slice(0,12);
+  if (!fl.length) { dd.innerHTML='<div class="hp-empty">Sonuç bulunamadı</div>'; return; }
+  dd.innerHTML = fl.map(function(h){
+    var col = avColor(h.ad+h.soyad);
+    return '<div class="hp-opt" data-hid="'+h.id+'">'
+      +'<div class="hp-av" style="background:'+col+'">'+(h.ad[0]+h.soyad[0]).toUpperCase()+'</div>'
+      +'<div><div class="hp-name">'+h.ad+' '+h.soyad+'</div>'
+      +'<div class="hp-sub">'+(h.tani||'—')+' · '+(h.tel||'—')+'</div></div></div>';
+  }).join('');
+  dd.querySelectorAll('.hp-opt').forEach(function(el){
+    el.addEventListener('mousedown', function(e){ e.preventDefault(); hpSelect(k, el.dataset.hid); });
+  });
+}
+
+function hpOpen(k) {
+  g(hpInpId(k)).readOnly = false;
+  hpBuildDD(k, '');
+  g(hpDdId(k)).classList.add('open');
+}
+
+function hpBlur(k) {
+  setTimeout(function(){
+    g(hpDdId(k)).classList.remove('open');
+    var inp = g(hpInpId(k));
+    if (pickerVal[k]) {
+      var h = hastalar.find(function(x){ return x.id===pickerVal[k]; });
+      if (h) inp.value = h.ad+' '+h.soyad;
+    } else { inp.value = ''; }
+    inp.readOnly = true;
+  }, 200);
+}
+
+function hpSelect(k, id) {
+  pickerVal[k] = id;
+  var h = hastalar.find(function(x){ return x.id===id; });
+  var inp = g(hpInpId(k));
+  inp.value = h ? h.ad+' '+h.soyad : '';
+  inp.readOnly = true;
+  g(hpHidId(k)).value = id;
+  g(hpClrId(k)).classList.add('vis');
+  g(hpDdId(k)).classList.remove('open');
+}
+
+function hpClear(k) {
+  pickerVal[k] = null;
+  var inp = g(hpInpId(k));
+  inp.value = ''; inp.readOnly = false; inp.focus();
+  g(hpHidId(k)).value = '';
+  g(hpClrId(k)).classList.remove('vis');
+  hpBuildDD(k, '');
+  g(hpDdId(k)).classList.add('open');
+}
+
+function hpReset(k) {
+  pickerVal[k] = null;
+  var inp = g(hpInpId(k));
+  inp.value = ''; inp.readOnly = true;
+  g(hpHidId(k)).value = '';
+  g(hpClrId(k)).classList.remove('vis');
+  g(hpDdId(k)).classList.remove('open');
+}
+
+function hpInit(k) {
+  var inp = g(hpInpId(k));
+  inp.addEventListener('focus', function(){ hpOpen(k); });
+  inp.addEventListener('blur', function(){ hpBlur(k); });
+  inp.addEventListener('input', function(){ hpBuildDD(k, inp.value); });
+  g(hpClrId(k)).addEventListener('click', function(){ hpClear(k); });
+}
+
+// ─── SLOT GRID ───────────────────────────────────────────────────
+async function loadSlots() {
+  var tarih = g('r-tarih').value;
+  var grid = g('slot-grid');
+  chosenSlot = null;
+  g('r-saat').value = '';
+  g('slot-warn').classList.remove('show');
+  if (!tarih) {
+    grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:20px;font-size:12px;color:var(--tx2)">Önce tarih seçin</div>';
+    return;
+  }
+  grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:16px;font-size:12px;color:var(--tx2)">Yükleniyor...</div>';
+  try {
+    var list = await api('/api/randevular?tarih='+tarih);
+    slotCounts = {};
+    ALL_SLOTS.forEach(function(s){ slotCounts[s] = 0; });
+    list.forEach(function(r){ if (slotCounts[r.saat]!==undefined) slotCounts[r.saat]++; else slotCounts[r.saat]=1; });
+    renderSlots();
+  } catch(e) {
+    grid.innerHTML = '<div style="grid-column:span 3;text-align:center;padding:16px;font-size:12px;color:var(--d)">Yüklenemedi</div>';
+  }
+}
+
+function renderSlots() {
+  var grid = g('slot-grid');
+  grid.innerHTML = ALL_SLOTS.map(function(slot){
+    var cnt = slotCounts[slot]||0;
+    var full = cnt >= MAX_PER_SLOT;
+    var near = cnt === MAX_PER_SLOT-1;
+    var cls = 'slot';
+    if (slot===chosenSlot) cls += ' slot-sel';
+    else if (full) cls += ' slot-full';
+    else if (near) cls += ' slot-warn';
+    var lbl = full ? '<div class="slot-cnt">Dolu ('+cnt+'/'+MAX_PER_SLOT+')</div>'
+              : cnt>0 ? '<div class="slot-cnt">'+cnt+'/'+MAX_PER_SLOT+' dolu</div>'
+              : '<div class="slot-cnt">Boş</div>';
+    return '<div class="'+cls+'"'+(full?'':' data-slot="'+slot+'"')+'>'
+      +'<div class="slot-time">'+slot+'</div>'+lbl+'</div>';
+  }).join('');
+  grid.querySelectorAll('[data-slot]').forEach(function(el){
+    el.addEventListener('click', function(){ chooseSlot(el.dataset.slot); });
+  });
+}
+
+function chooseSlot(s) {
+  chosenSlot = s;
+  g('r-saat').value = s;
+  var cnt = (slotCounts[s]||0) + 1;
+  var wb = g('slot-warn'); var wt = g('slot-warn-txt');
+  if (cnt > MAX_PER_SLOT) {
+    wt.textContent = 'Bu saatte zaten '+slotCounts[s]+' randevu var! Kapasiteyi aşıyor.';
+    wb.style.background='var(--ds)'; wb.style.borderColor='var(--d)'; wb.style.color='#b91c1c';
+    wb.classList.add('show');
+  } else if (cnt === MAX_PER_SLOT) {
+    wt.textContent = 'Bu eklemeyle saat '+s+' kapasitesi dolacak ('+cnt+'/'+MAX_PER_SLOT+').';
+    wb.style.background='var(--ws)'; wb.style.borderColor='var(--w)'; wb.style.color='#92400e';
+    wb.classList.add('show');
+  } else { wb.classList.remove('show'); }
+  renderSlots();
+}
+
+// ─── HASTA CRUD ──────────────────────────────────────────────────
+async function loadHastalar() { hastalar = await api('/api/hastalar'); }
+
+// ─── HASTA MODAL RANDEVU SLOT STATE ─────────────────────────────
+var hrSlotCounts = {};
+var hrChosenSlot = null;
+
+function openHasta(id) {
+  editHId = id || null;
+  ['h-ad','h-soyad','h-tel','h-email','h-tani','h-anm','h-not'].forEach(function(f){ g(f).value=''; });
+  g('h-dogum').value=''; g('h-slim').value='';
+  g('h-cins').value='K'; g('h-fiz').value='Fzt. 1';
+  // Reset to kisisel tab
+  hmSwitchTab('ki');
+  if (editHId) {
+    var h = hastalar.find(function(x){ return x.id===editHId; });
+    if (h) {
+      g('h-ad').value=h.ad||''; g('h-soyad').value=h.soyad||'';
+      g('h-dogum').value=h.dogum||''; g('h-cins').value=h.cins||'K';
+      g('h-tel').value=h.tel||''; g('h-email').value=h.email||'';
+      g('h-tani').value=h.tani||''; g('h-slim').value=h.slim||'';
+      g('h-fiz').value=h.fiz||'Fzt. 1'; g('h-anm').value=h.anm||'';
+      g('h-not').value=h.not_||'';
+    }
+    // Show randevu tab for existing patient
+    hrOpenTab(editHId);
+  } else {
+    // New patient: show warning in randevu tab
+    g('hr-uyari').style.display='block';
+    g('hr-form').style.display='none';
+  }
+  g('hm-t').textContent = editHId ? 'Hasta Düzenle' : 'Yeni Hasta';
+  openModal('ov-hasta');
+}
+
+function hmSwitchTab(key) {
+  ['ki','ti','rd'].forEach(function(k){
+    g('tp-'+k).classList.remove('act');
+    g('tb-'+k).classList.remove('act');
+  });
+  g('tp-'+key).classList.add('act');
+  g('tb-'+key).classList.add('act');
+}
+
+function hrOpenTab(hastaId) {
+  var h = hastalar.find(function(x){ return x.id===hastaId; });
+  if (!h) return;
+  g('hr-uyari').style.display='none';
+  g('hr-form').style.display='flex';
+  g('hr-hasta-lbl').textContent='Hasta: '+h.ad+' '+h.soyad;
+  // Set default fiz from hasta
+  g('hr-fiz').value = h.fiz||'Fzt. 1';
+  // Set today
+  g('hr-tarih').value = new Date().toISOString().split('T')[0];
+  g('hr-saat').value='';
+  g('hr-not').value='';
+  g('hr-durum').value='Planlandı';
+  hrChosenSlot=null;
+  g('hr-slot-warn').classList.remove('show');
+  hrLoadSlots(hastaId);
+  hrRenderList(hastaId);
+}
+
+async function hrLoadSlots(hastaId) {
+  var tarih = g('hr-tarih').value;
+  var grid = g('hr-slot-grid');
+  hrChosenSlot=null; g('hr-saat').value='';
+  g('hr-slot-warn').classList.remove('show');
+  if (!tarih) {
+    grid.innerHTML='<div style="grid-column:span 3;text-align:center;padding:16px;font-size:12px;color:var(--tx2)">Tarih seçin</div>';
+    return;
+  }
+  grid.innerHTML='<div style="grid-column:span 3;text-align:center;padding:12px;font-size:12px;color:var(--tx2)">Yükleniyor...</div>';
+  try {
+    var list = await api('/api/randevular?tarih='+tarih);
+    hrSlotCounts={};
+    ALL_SLOTS.forEach(function(s){ hrSlotCounts[s]=0; });
+    list.forEach(function(r){ if(hrSlotCounts[r.saat]!==undefined) hrSlotCounts[r.saat]++; else hrSlotCounts[r.saat]=1; });
+    hrRenderSlots(hastaId);
+  } catch(e) {
+    grid.innerHTML='<div style="grid-column:span 3;text-align:center;padding:12px;font-size:12px;color:var(--d)">Yüklenemedi</div>';
+  }
+}
+
+function hrRenderSlots(hastaId) {
+  var grid = g('hr-slot-grid');
+  grid.innerHTML = ALL_SLOTS.map(function(slot){
+    var cnt=hrSlotCounts[slot]||0, full=cnt>=MAX_PER_SLOT, near=cnt===MAX_PER_SLOT-1;
+    var cls='slot'+(slot===hrChosenSlot?' slot-sel':full?' slot-full':near?' slot-warn':'');
+    var lbl=full?'<div class="slot-cnt">Dolu ('+cnt+'/'+MAX_PER_SLOT+')</div>'
+           :cnt>0?'<div class="slot-cnt">'+cnt+'/'+MAX_PER_SLOT+' dolu</div>'
+           :'<div class="slot-cnt">Boş</div>';
+    return '<div class="'+cls+'"'+(full?'':' data-slot="'+slot+'" data-hid="'+hastaId+'"')+'>'
+      +'<div class="slot-time">'+slot+'</div>'+lbl+'</div>';
+  }).join('');
+  grid.querySelectorAll('[data-slot]').forEach(function(el){
+    el.addEventListener('click', function(){ hrChooseSlot(el.dataset.slot, el.dataset.hid); });
+  });
+}
+
+function hrChooseSlot(s, hastaId) {
+  hrChosenSlot=s; g('hr-saat').value=s;
+  var cnt=(hrSlotCounts[s]||0)+1;
+  var wb=g('hr-slot-warn'), wt=g('hr-slot-warn-txt');
+  if(cnt>MAX_PER_SLOT){
+    wt.textContent='Bu saatte zaten '+hrSlotCounts[s]+' randevu var!';
+    wb.style.background='var(--ds)';wb.style.borderColor='var(--d)';wb.style.color='#b91c1c';
+    wb.classList.add('show');
+  } else if(cnt===MAX_PER_SLOT){
+    wt.textContent='Bu eklemeyle saat '+s+' dolacak ('+cnt+'/'+MAX_PER_SLOT+').';
+    wb.style.background='var(--ws)';wb.style.borderColor='var(--w)';wb.style.color='#92400e';
+    wb.classList.add('show');
+  } else { wb.classList.remove('show'); }
+  hrRenderSlots(hastaId);
+}
+
+async function hrEkleRandevu() {
+  if (!editHId) { toast('Önce hastayı kaydedin!','err'); return; }
+  var saat=g('hr-saat').value;
+  if (!saat) { toast('Saat slotu seçin!','err'); return; }
+  if ((hrSlotCounts[saat]||0)>=MAX_PER_SLOT) {
+    if (!confirm('Bu saatte '+hrSlotCounts[saat]+' randevu var (max '+MAX_PER_SLOT+'). Yine de eklensin mi?')) return;
+  }
+  var btn=g('hr-ekle-btn'); btn.innerHTML='<span class="spin"></span>Ekleniyor...'; btn.disabled=true;
+  try {
+    await api('/api/randevular',{method:'POST',body:JSON.stringify({
+      hasta_id:editHId, tarih:g('hr-tarih').value, saat:saat,
+      fiz:g('hr-fiz').value, durum:g('hr-durum').value, not_:g('hr-not').value
+    })});
+    // Reset slot selection
+    hrChosenSlot=null; g('hr-saat').value=''; g('hr-slot-warn').classList.remove('show');
+    g('hr-not').value=''; g('hr-durum').value='Planlandı';
+    await hrLoadSlots(editHId);
+    await hrRenderList(editHId);
+    updateStats();
+    toast('Randevu eklendi!');
+  } catch(e) { toast('Hata: '+e.message,'err'); }
+  btn.innerHTML='+ Randevu Ekle'; btn.disabled=false;
+}
+
+async function hrRenderList(hastaId) {
+  var el=g('hr-list');
+  var randevular=await api('/api/randevular?hasta_id='+hastaId);
+  randevular.sort(function(a,b){ return (a.tarih+a.saat).localeCompare(b.tarih+b.saat); });
+  if (!randevular.length) {
+    el.innerHTML='<div style="font-size:12px;color:var(--tx2);text-align:center;padding:12px">Henüz randevu eklenmemiş</div>';
+    return;
+  }
+  el.innerHTML='<div style="font-size:11px;font-weight:700;color:var(--tx2);text-transform:uppercase;margin-bottom:8px">Mevcut Randevular</div>'
+    +randevular.map(function(r){
+      return '<div class="ri" style="margin-bottom:6px">'
+        +'<span class="rt">'+r.saat+'</span>'
+        +'<div style="flex:1"><div style="font-weight:600;font-size:13px">'+fmtDate(r.tarih)+'</div>'
+        +'<div style="font-size:11px;color:var(--tx2)">'+r.fiz+(r.not_?' · '+r.not_:'')+'</div></div>'
+        +dBadge(r.durum)
+        +'<button class="btn btn-sm btn-d" data-rdel="'+r.id+'">Sil</button></div>';
+    }).join('');
+  el.querySelectorAll('[data-rdel]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      if(!confirm('Bu randevu silinsin mi?')) return;
+      await api('/api/randevular/'+b.dataset.rdel,{method:'DELETE'});
+      await hrLoadSlots(hastaId);
+      await hrRenderList(hastaId);
+      updateStats();
+      toast('Randevu silindi.');
+    });
+  });
+}
+
+async function saveHasta() {
+  var ad=g('h-ad').value.trim(), soyad=g('h-soyad').value.trim();
+  if (!ad||!soyad) { toast('Ad ve soyad zorunludur!','err'); return; }
+  var btn=g('hm-btn'); btn.innerHTML='<span class="spin"></span>Kaydediliyor...'; btn.disabled=true;
+  var d={ad:ad,soyad:soyad,dogum:g('h-dogum').value,cins:g('h-cins').value,
+    tel:g('h-tel').value,email:g('h-email').value,tani:g('h-tani').value,
+    slim:g('h-slim').value||null,fiz:g('h-fiz').value,anm:g('h-anm').value,not_:g('h-not').value};
+  try {
+    var wasNew = !editHId;
+    if (editHId) {
+      await api('/api/hastalar/'+editHId,{method:'PUT',body:JSON.stringify(d)});
+    } else {
+      var res = await api('/api/hastalar',{method:'POST',body:JSON.stringify(d)});
+      editHId = res.id;
+    }
+    await loadHastalar();
+    renderH();
+    updateStats();
+    toast('Hasta kaydedildi!');
+    btn.innerHTML='Kaydet'; btn.disabled=false;
+    // After save: switch to randevu tab automatically
+    hmSwitchTab('rd');
+    hrOpenTab(editHId);
+    g('hm-btn').textContent='Güncelle';
+    return;
+  } catch(e) { toast('Hata: '+e.message,'err'); }
+  btn.innerHTML='Kaydet'; btn.disabled=false;
+}
+
+async function delHasta(id) {
+  if (!confirm('Bu hastayı silmek istiyor musunuz?')) return;
+  await api('/api/hastalar/'+id,{method:'DELETE'});
+  await loadHastalar(); renderH(); updateStats(); toast('Hasta silindi.');
+}
+
+async function renderH() {
+  var q=(g('h-search').value||'').toLowerCase();
+  var fl=hastalar.filter(function(h){ return (h.ad+' '+h.soyad+' '+(h.tani||'')).toLowerCase().indexOf(q)!==-1; });
+  var el=g('h-list');
+  if (!fl.length) { el.innerHTML='<div class="empty">Kayıtlı hasta bulunamadı</div>'; return; }
+  el.innerHTML='<div class="empty">Yükleniyor...</div>';
+  var sd=await Promise.all(fl.map(function(h){ return api('/api/seanslar?hasta_id='+h.id+'&limit=999'); }));
+  el.innerHTML=fl.map(function(h,i){
+    var sc=sd[i].length, col=avColor(h.ad+h.soyad), ini=(h.ad[0]+h.soyad[0]).toUpperCase();
+    return '<div class="hk" data-hid="'+h.id+'">'
+      +'<div class="av" style="background:'+col+'">'+ini+'</div>'
+      +'<div style="flex:1"><div style="font-weight:700;font-size:14px">'+h.ad+' '+h.soyad+'</div>'
+      +'<div style="font-size:12px;color:var(--tx2);margin-top:2px">'+(h.tani||'—')+' · '+calcAge(h.dogum)+' · '+(h.tel||'—')+'</div></div>'
+      +'<div style="text-align:right"><span class="badge b-b">'+sc+' seans</span>'
+      +'<div style="font-size:11px;color:var(--tx3);margin-top:3px">'+h.fiz+'</div></div>'
+      +'<div style="display:flex;gap:6px">'
+      +'<button class="btn btn-sm" data-edit="'+h.id+'">✏️</button>'
+      +'<button class="btn btn-sm btn-d" data-del="'+h.id+'">🗑️</button></div></div>';
+  }).join('');
+  el.querySelectorAll('.hk').forEach(function(row){
+    row.addEventListener('click', function(e){
+      if (e.target.closest('[data-edit],[data-del]')) return;
+      openDetay(row.dataset.hid);
+    });
+  });
+  el.querySelectorAll('[data-edit]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); openHasta(b.dataset.edit); }); });
+  el.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); delHasta(b.dataset.del); }); });
+}
+
+async function openDetay(id) {
+  var h=hastalar.find(function(x){return x.id===id;}); if(!h) return;
+  var hs=await api('/api/seanslar?hasta_id='+id+'&limit=999');
+  var col=avColor(h.ad+h.soyad), ini=(h.ad[0]+h.soyad[0]).toUpperCase();
+  g('det-title').textContent=h.ad+' '+h.soyad;
+  g('det-edit').onclick=function(){ closeModal('ov-detay'); openHasta(id); };
+  var tl=hs.length?'<div class="tl">'+hs.map(function(s){
+    var isls=parseIslemler(s.islemler);
+    return '<div class="ti"><div class="td2"></div>'
+      +'<div class="td3">'+fmtDate(s.tarih)+' '+(s.saat||'')+' · '+s.fiz+' · Ağrı: '+s.agri+'/10</div>'
+      +'<div class="tc"><div>'+isls.map(iLabel).join('')+'</div>'
+      +(s.not_?'<div style="margin-top:6px;font-size:12px;color:var(--tx2)">'+s.not_+'</div>':'')+'</div></div>';
+  }).join('')+'</div>':'<div class="empty">Henüz seans kaydı yok</div>';
+  g('det-body').innerHTML='<div class="prof"><div class="pav">'+ini+'</div>'
+    +'<div style="font-size:19px;font-weight:700">'+h.ad+' '+h.soyad+'</div>'
+    +'<div style="opacity:.8;font-size:13px;margin-top:3px">'+(h.tani||'—')+'</div>'
+    +'<div style="display:flex;gap:18px;margin-top:12px;font-size:12px">'
+    +'<span>📞 '+(h.tel||'—')+'</span><span>🎂 '+(h.dogum?fmtDate(h.dogum)+' ('+calcAge(h.dogum)+')':'—')+'</span>'
+    +'<span>👤 '+(h.cins==='K'?'Kadın':'Erkek')+'</span></div></div>'
+    +'<div class="g2" style="margin-bottom:16px">'
+    +'<div class="stat"><div class="stat-n">Fizyoterapist</div><div style="font-weight:600;font-size:14px;margin-top:5px">'+h.fiz+'</div></div>'
+    +'<div class="stat"><div class="stat-n">Seans / Hedef</div><div style="font-weight:600;font-size:14px;margin-top:5px">'+hs.length+' / '+(h.slim||'?')+'</div></div></div>'
+    +(h.anm?'<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--tx2);margin-bottom:5px">ANAMNEZ</div>'+h.anm+'</div></div>':'')
+    +(h.not_?'<div class="card" style="margin-bottom:12px"><div class="cb" style="padding:14px"><div style="font-size:11px;font-weight:700;color:var(--tx2);margin-bottom:5px">NOTLAR</div>'+h.not_+'</div></div>':'')
+    +'<div style="font-size:14px;font-weight:700;margin-bottom:14px">Seans Geçmişi</div>'+tl;
+  openModal('ov-detay');
+}
+
+// ─── STATS & DASHBOARD ───────────────────────────────────────────
+async function updateStats() {
+  try {
+    var s=await api('/api/stats');
+    g('st-h').textContent=s.hastalar; g('st-r').textContent=s.randevu_bugun;
+    g('st-sw').textContent=s.seans_hafta; g('st-st').textContent=s.seans_toplam;
+  } catch(e){}
+}
+
+async function renderDash() {
+  await updateStats();
+  var today=new Date().toISOString().split('T')[0];
+  var res=await Promise.all([api('/api/randevular?tarih='+today), api('/api/seanslar?limit=5')]);
+  var tr=res[0], ts=res[1];
+  g('db-r').innerHTML=tr.length?tr.sort(function(a,b){return a.saat.localeCompare(b.saat);}).map(function(r){
+    var tamam=r.durum==='Tamamlandı', iptal=r.durum==='İptal';
+    return '<div class="ri" style="'+(iptal?'opacity:.55':'')+(tamam?'border-color:var(--gs)':'')+'">'
+      +'<span class="rt">'+r.saat+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+hAd(r.hasta_id)+'</div>'
+      +'<div style="font-size:11px;color:var(--tx2)">'+r.fiz+'</div></div>'
+      +'<div style="display:flex;align-items:center;gap:6px">'+dBadge(r.durum)
+      +(!tamam&&!iptal?'<button class="btn btn-sm btn-g" data-sgir="'+r.id+'" data-hid="'+r.hasta_id+'" data-tarih="'+r.tarih+'" data-saat="'+r.saat+'" data-fiz="'+r.fiz+'">⚡</button>':'')
+      +'</div></div>';
+  }).join(''):'<div class="empty">Bugün randevu yok</div>';
+  g('db-r').querySelectorAll('[data-sgir]').forEach(function(b){
+    b.addEventListener('click', function(){
+      seansGir(b.dataset.hid, b.dataset.tarih, b.dataset.saat, b.dataset.fiz);
+    });
+  });
+  g('db-s').innerHTML=ts.length?ts.map(function(s){
+    var isls=parseIslemler(s.islemler);
+    return '<div class="ri"><span class="rt" style="font-size:10px">'+fmtDate(s.tarih)+'</span>'
+      +'<div style="flex:1"><div style="font-weight:700;font-size:13px">'+hAd(s.hasta_id)+'</div>'
+      +'<div style="font-size:11px">'+isls.map(iLabel).join('')+'</div></div>'
+      +'<span style="font-size:11px;color:var(--tx2)">Ağrı:'+s.agri+'/10</span></div>';
+  }).join(''):'<div class="empty">Seans yok</div>';
+}
+
+// ─── RANDEVU ────────────────────────────────────────────────────
+function openRandevu() {
+  hpReset('r');
+  g('r-tarih').value=selDate; g('r-not').value=''; g('r-durum').value='Planlandı';
+  chosenSlot=null; g('r-saat').value=''; g('slot-warn').classList.remove('show');
+  loadSlots(); openModal('ov-randevu');
+}
+
+async function saveRandevu() {
+  var hId=g('r-hasta').value;
+  if (!hId) { toast('Hasta seçin!','err'); return; }
+  var saat=g('r-saat').value;
+  if (!saat) { toast('Saat slotu seçin!','err'); return; }
+  if ((slotCounts[saat]||0)>=MAX_PER_SLOT) {
+    if (!confirm('⚠️ Bu saatte '+slotCounts[saat]+' randevu var (max '+MAX_PER_SLOT+'). Yine de eklensin mi?')) return;
+  }
+  var btn=g('rm-btn'); btn.innerHTML='<span class="spin"></span>Kaydediliyor...'; btn.disabled=true;
+  try {
+    await api('/api/randevular',{method:'POST',body:JSON.stringify({
+      hasta_id:hId,tarih:g('r-tarih').value,saat:saat,
+      fiz:g('r-fiz').value,durum:g('r-durum').value,not_:g('r-not').value
+    })});
+    closeModal('ov-randevu'); await renderCal(); updateStats(); toast('Randevu eklendi!');
+  } catch(e) { toast('Hata: '+e.message,'err'); }
+  btn.innerHTML='Kaydet'; btn.disabled=false;
+}
+
+async function delRandevu(id) {
+  if (!confirm('Randevu silinsin mi?')) return;
+  await api('/api/randevular/'+id,{method:'DELETE'});
+  renderRL(); updateStats();
+}
+
+async function renderCal() {
+  var DAYS=['Pzt','Sal','Çar','Per','Cum','Cmt','Paz'];
+  var MONTHS=['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+  g('cal-label').textContent=MONTHS[calM]+' '+calY;
+  var hasR=await api('/api/randevular/month?year='+calY+'&month='+(calM+1));
+  calHasR={}; hasR.forEach(function(d){ calHasR[d]=true; });
+  var grid=g('cal-grid');
+  grid.innerHTML=DAYS.map(function(d){return '<div class="cal-dh">'+d+'</div>';}).join('');
+  var first=new Date(calY,calM,1);
+  var sd=first.getDay(); sd=sd===0?6:sd-1;
+  var dim=new Date(calY,calM+1,0).getDate();
+  var pd=new Date(calY,calM,0).getDate();
+  var today=new Date().toISOString().split('T')[0];
+  var h='';
+  for(var i=sd-1;i>=0;i--) h+='<div class="cal-d om">'+(pd-i)+'</div>';
+  for(var d=1;d<=dim;d++){
+    var ds=calY+'-'+String(calM+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    var cls='cal-d'+(ds===today?' today':'')+(ds===selDate?' sel':'');
+    h+='<div class="'+cls+'" data-date="'+ds+'">'+d+(calHasR[ds]?'<span class="cal-dot"></span>':'')+'</div>';
+  }
+  grid.innerHTML+=h;
+  grid.querySelectorAll('[data-date]').forEach(function(el){
+    el.addEventListener('click', function(){ selDate=el.dataset.date; renderCal(); });
+  });
+  await renderRL();
+}
+
+
+// ─── RANDEVUDAN SEANS GİRİŞİ ────────────────────────────────────
+function seansGir(hastaId, tarih, saat, fiz) {
+  // Seans sekmesine git, formu doldur
+  navTo('seanslar');
+  // Hasta picker'ı doldur
+  hpReset('s');
+  hpSelect('s', hastaId);
+  // Tarih, saat, fiz
+  g('s-tarih').value = tarih;
+  g('s-saat').value = saat;
+  g('s-fiz').value = fiz || 'Fzt. 1';
+  // Scroll to form
+  setTimeout(function(){
+    var form = g('sec-seanslar');
+    if (form) form.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 100);
+  toast('Hasta seçildi — işlemleri seçip kaydedin');
+}
+
+async function renderRL() {
+  var dr=await api('/api/randevular?tarih='+selDate);
+  dr.sort(function(a,b){return a.saat.localeCompare(b.saat);});
+  g('r-hdr').textContent='📅 '+fmtDate(selDate)+' Randevuları';
+  var el=g('r-list');
+  if(!dr.length){el.innerHTML='<div class="empty">Bu tarihe ait randevu yok</div>';return;}
+  el.innerHTML=dr.map(function(r){
+    var iptal = r.durum==='İptal';
+    var tamam = r.durum==='Tamamlandı';
+    return '<div class="ri" style="'+(iptal?'opacity:.55':'')+(tamam?'border-color:var(--gs)':'')+'">'
+      +'<div style="display:flex;flex-direction:column;align-items:center;min-width:46px">'
+      +'<span class="rt">'+r.saat+'</span>'
+      +'<span style="font-size:9px;color:var(--tx3);margin-top:2px">'+r.fiz.replace('Fzt. ','F')+'</span>'
+      +'</div>'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+hAd(r.hasta_id)+'</div>'
+      +'<div style="font-size:11px;color:var(--tx2);margin-top:1px">'+(r.not_||'—')+'</div>'
+      +'<div style="margin-top:4px">'+dBadge(r.durum)+'</div>'
+      +'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;flex-shrink:0">'
+      +(!tamam && !iptal
+        ? '<button class="btn btn-sm btn-g" data-sgir="'+r.id+'" data-hid="'+r.hasta_id+'" data-tarih="'+r.tarih+'" data-saat="'+r.saat+'" data-fiz="'+r.fiz+'">⚡ Seans Gir</button>'
+        : '')
+      +'<button class="btn btn-sm btn-d" data-rid="'+r.id+'">Sil</button>'
+      +'</div></div>';
+  }).join('');
+  el.querySelectorAll('[data-rid]').forEach(function(b){
+    b.addEventListener('click', function(){ delRandevu(b.dataset.rid); });
+  });
+  el.querySelectorAll('[data-sgir]').forEach(function(b){
+    b.addEventListener('click', function(){
+      seansGir(b.dataset.hid, b.dataset.tarih, b.dataset.saat, b.dataset.fiz);
+    });
+  });
+}
+
+// ─── SEANS ──────────────────────────────────────────────────────
+function initChips() {
+  selIslArr=[];
+  var el=g('islem-chips');
+  el.innerHTML=ISLEMLER.map(function(i){return '<div class="chip" data-isl="'+i.id+'">'+i.l+'</div>';}).join('');
+  el.querySelectorAll('.chip').forEach(function(c){
+    c.addEventListener('click', function(){
+      var id=c.dataset.isl;
+      if(selIslArr.indexOf(id)!==-1){selIslArr=selIslArr.filter(function(x){return x!==id;});c.classList.remove('on');}
+      else{selIslArr.push(id);c.classList.add('on');}
+    });
+  });
+}
+
+async function saveSeans() {
+  var hId=g('s-hasta').value;
+  if(!hId){toast('Hasta seçin!','err');return;}
+  if(!selIslArr.length){toast('En az bir işlem seçin!','err');return;}
+  var btn=g('seans-btn'); btn.innerHTML='<span class="spin"></span>Kaydediliyor...'; btn.disabled=true;
+  try {
+    await api('/api/seanslar',{method:'POST',body:JSON.stringify({
+      hasta_id:hId,fiz:g('s-fiz').value,tarih:g('s-tarih').value,
+      saat:g('s-saat').value,islemler:selIslArr,not_:g('s-not').value,agri:g('s-agri').value
+    })});
+    // Aynı hasta + tarih + saat için bekleyen randevu varsa "Tamamlandı" yap
+    try {
+      var tarih=g('s-tarih').value, saat=g('s-saat').value;
+      var rdvList=await api('/api/randevular?hasta_id='+hId);
+      var eslesme=rdvList.filter(function(r){return r.tarih===tarih&&r.saat===saat&&r.durum==='Planlandı';});
+      for(var i=0;i<eslesme.length;i++){
+        await api('/api/randevular/'+eslesme[i].id+'/durum',{method:'PATCH',body:JSON.stringify({durum:'Tamamlandı'})});
+      }
+    } catch(e2){}
+    selIslArr=[]; document.querySelectorAll('.chip').forEach(function(c){c.classList.remove('on');});
+    g('s-not').value=''; g('s-agri').value=5; g('agri-v').textContent='5';
+    hpReset('s'); await renderSW(); updateStats(); toast('Seans kaydedildi!');
+  } catch(e) { toast('Hata: '+e.message,'err'); }
+  btn.innerHTML='✓ Seansı Kaydet'; btn.disabled=false;
+}
+
+async function renderSW() {
+  var el=g('s-widget');
+  var seanslar=await api('/api/seanslar?limit=30');
+  if(!seanslar.length){el.innerHTML='<div class="empty">Henüz seans kaydı yok</div>';return;}
+  el.innerHTML=seanslar.map(function(s){
+    var isls=parseIslemler(s.islemler);
+    return '<div style="padding:11px;border:1px solid var(--bdr);border-radius:var(--r2);margin-bottom:8px">'
+      +'<div style="display:flex;justify-content:space-between;margin-bottom:5px">'
+      +'<span style="font-weight:700;font-size:13px">'+hAd(s.hasta_id)+'</span>'
+      +'<span style="font-size:11px;color:var(--tx2)">'+fmtDate(s.tarih)+' '+(s.saat||'')+'</span></div>'
+      +'<div style="font-size:11px;color:var(--tx2);margin-bottom:5px">'+s.fiz+' · Ağrı: '+s.agri+'/10</div>'
+      +'<div>'+isls.map(iLabel).join('')+'</div>'
+      +(s.not_?'<div style="margin-top:5px;font-size:11px;color:var(--tx2)">'+s.not_+'</div>':'')
+      +'</div>';
+  }).join('');
+}
+
+// ─── RAPOR ──────────────────────────────────────────────────────
+function updateRaporSel() {
+  var el=g('rap-h'); if(!el) return;
+  var v=el.value;
+  el.innerHTML='<option value="">Tüm hastalar</option>'
+    +hastalar.map(function(h){return '<option value="'+h.id+'">'+h.ad+' '+h.soyad+'</option>';}).join('');
+  el.value=v;
+}
+
+async function renderRapor() {
+  var hId=g('rap-h').value, bas=g('rap-b').value, bit=g('rap-e').value, fiz=g('rap-f').value;
+  var url='/api/seanslar?limit=9999';
+  if(hId) url+='&hasta_id='+hId;
+  if(fiz) url+='&fiz='+encodeURIComponent(fiz);
+  if(bas) url+='&bas='+bas;
+  if(bit) url+='&bit='+bit;
+  var fl=await api(url);
+  fl.sort(function(a,b){return a.tarih.localeCompare(b.tarih);});
+  var ic={};
+  fl.forEach(function(s){ parseIslemler(s.islemler).forEach(function(i){ic[i]=(ic[i]||0)+1;}); });
+  var hasta=hId?hastalar.find(function(h){return h.id===hId;}):null;
+  var avg=fl.length?Math.round(fl.reduce(function(a,s){return a+parseInt(s.agri||0);},0)/fl.length*10)/10:null;
+  var h='<div class="card" id="rap-inner"><div class="cb">';
+  h+='<div style="text-align:center;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid var(--bdr)">'
+    +'<div style="font-size:20px;font-weight:800;color:var(--acc)">🏥 FizTak — Seans Raporu</div>'
+    +'<div style="font-size:12px;color:var(--tx2);margin-top:4px">'+new Date().toLocaleDateString('tr-TR')+'</div></div>';
+  if(hasta) h+='<div style="background:var(--as);border-radius:var(--r2);padding:16px;margin-bottom:16px">'
+    +'<div style="font-size:13px;font-weight:700;margin-bottom:8px">Hasta Bilgileri</div>'
+    +'<div class="g3" style="font-size:13px">'
+    +'<div><div style="font-size:11px;color:var(--tx2)">Ad Soyad</div><strong>'+hasta.ad+' '+hasta.soyad+'</strong></div>'
+    +'<div><div style="font-size:11px;color:var(--tx2)">Doğum</div>'+(hasta.dogum?fmtDate(hasta.dogum)+' ('+calcAge(hasta.dogum)+')':'—')+'</div>'
+    +'<div><div style="font-size:11px;color:var(--tx2)">Tanı</div>'+(hasta.tani||'—')+'</div></div></div>';
+  h+='<div class="g4" style="margin-bottom:16px">'
+    +'<div class="stat"><div class="stat-n">Toplam Seans</div><div class="stat-v" style="font-size:22px;color:var(--acc)">'+fl.length+'</div></div>'
+    +'<div class="stat"><div class="stat-n">Ort. Ağrı</div><div class="stat-v" style="font-size:22px;color:var(--w)">'+(avg!==null?avg:'—')+'</div></div>'
+    +'<div class="stat"><div class="stat-n">Farklı İşlem</div><div class="stat-v" style="font-size:22px">'+Object.keys(ic).length+'</div></div>'
+    +'<div class="stat"><div class="stat-n">Fizyoterapist</div><div style="font-weight:600;font-size:13px;margin-top:6px">'+(fiz||'Tümü')+'</div></div></div>';
+  if(Object.keys(ic).length){
+    h+='<div style="margin-bottom:16px"><div style="font-size:13px;font-weight:700;margin-bottom:8px">İşlem Dağılımı</div><div>';
+    Object.entries(ic).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){
+      var it=ISLEMLER.find(function(x){return x.id===e[0];}); if(it) h+='<span class="ibl" style="background:'+it.c+'22;color:'+it.c+';border:1px solid '+it.c+'44">'+it.l+': '+e[1]+'</span>';
+    });
+    h+='</div></div>';
+  }
+  h+='<div style="font-size:13px;font-weight:700;margin-bottom:12px">Seans Detayları</div><div style="overflow-x:auto"><table>'
+    +'<thead><tr><th>#</th><th>Tarih</th><th>Saat</th>'+(hId?'':'<th>Hasta</th>')+'<th>Fzt</th><th>Ağrı</th><th>İşlemler</th><th>Not</th></tr></thead><tbody>'
+    +fl.map(function(s,i){
+      var isls=parseIslemler(s.islemler);
+      return '<tr><td>'+(i+1)+'</td><td>'+fmtDate(s.tarih)+'</td><td>'+(s.saat||'')+'</td>'
+        +(hId?'':'<td>'+hAd(s.hasta_id)+'</td>')
+        +'<td>'+s.fiz+'</td><td>'+s.agri+'/10</td><td>'+isls.map(iLabel).join('')+'</td>'
+        +'<td style="font-size:11px;max-width:160px">'+(s.not_||'—')+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+  if(!fl.length) h+='<div class="empty">Bu filtreye uygun seans bulunamadı</div>';
+  h+='</div></div>';
+  g('rap-content').innerHTML=h;
+}
+
+function printRapor() {
+  var c=g('rap-inner'); if(!c){toast('Önce raporu getirin.');return;}
+  var w=window.open('','_blank');
+  w.document.write('<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>FizTak Rapor</title>'
+    +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif;color:#0f172a;padding:28px;font-size:13px}'
+    +'table{width:100%;border-collapse:collapse}th{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;padding:8px 12px;text-align:left;border-bottom:1px solid #e2e8f0;background:#f8fafc}'
+    +'td{padding:9px 12px;border-bottom:.5px solid #e2e8f0;font-size:12px}'
+    +'.ibl{display:inline-block;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:600;margin:2px}'
+    +'.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}'
+    +'.stat{background:#f8fafc;border-radius:8px;padding:12px}.stat-n{font-size:10px;font-weight:700;color:#475569;text-transform:uppercase}.stat-v{font-size:20px;font-weight:700;margin-top:4px}'
+    +'@media print{body{padding:14px}}
+/* ══ AI PANEL ════════════════════════════════════════════════════ */
+.ai-card{background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:var(--r);padding:20px;color:#fff;margin-bottom:16px}
+.ai-card-title{font-size:13px;font-weight:700;opacity:.7;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.ai-card-val{font-size:28px;font-weight:700}
+.ai-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:100px;font-size:12px;font-weight:600;background:rgba(255,255,255,.15);color:#fff;margin:3px}
+.ai-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:var(--r2);font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:'DM Sans',sans-serif;transition:all .15s;min-height:44px}
+.ai-btn-p{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff}
+.ai-btn-p:active{opacity:.85}
+.ai-btn-g{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
+.ai-btn-g:active{opacity:.85}
+.ai-btn-b{background:linear-gradient(135deg,#0284c7,#0ea5e9);color:#fff}
+.ai-btn-b:active{opacity:.85}
+.ai-btn-o{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff}
+.ai-btn-o:active{opacity:.85}
+.ai-result{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r2);padding:16px;font-size:13px;line-height:1.7;white-space:pre-wrap;margin-top:12px;max-height:320px;overflow-y:auto}
+.ai-result.loading{color:var(--tx2);font-style:italic}
+.ai-result.error{color:var(--d);background:var(--ds)}
+.chart-bar-wrap{display:flex;align-items:flex-end;gap:4px;height:80px;margin:8px 0}
+.chart-bar{flex:1;background:var(--acc);border-radius:4px 4px 0 0;min-width:12px;transition:height .3s;position:relative;cursor:pointer}
+.chart-bar:hover{opacity:.8}
+.chart-bar-lbl{font-size:9px;color:var(--tx3);text-align:center;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.risk-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r2);background:var(--ds);border:1px solid var(--d);margin-bottom:6px}
+.risk-dot{width:8px;height:8px;border-radius:50%;background:var(--d);flex-shrink:0}
+.anal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.anal-stat{background:var(--surf2);border-radius:var(--r2);padding:14px;text-align:center;border:1px solid var(--bdr)}
+.anal-stat-v{font-size:22px;font-weight:700;color:var(--acc)}
+.anal-stat-n{font-size:11px;color:var(--tx2);margin-top:3px}
+@media(max-width:768px){.anal-grid{grid-template-columns:repeat(2,1fr)}}
+.epikriz-preview{background:#fff;border:1px solid var(--bdr);border-radius:var(--r2);padding:20px;font-size:13px;line-height:1.8;white-space:pre-wrap;font-family:'Georgia',serif;max-height:400px;overflow-y:auto}
+</style></head><body>'+c.innerHTML+'</body></html>');
+  w.document.close(); setTimeout(function(){w.print();},400);
+}
+
+
+// ─── ANALİTİK ────────────────────────────────────────────────────
+var ISLEM_LABELS={'SIS':'SİS','HIL':'HIL','ESWT':'ESWT','KINEZIO':'Kinezyo','INFRARUJ':'İnfraruj','TENS':'TENS','PARAFIN':'Parafin','LIPODEM':'Lipödem','BANDAJ':'Bandaj','SKOLYOZ':'Skolyoz','EGZERSIZ':'Egzersiz','KONTRAS':'Kontrast'};
+
+async function renderAnalitik() {
+  try {
+    var d = await api('/api/analitik');
+    g('an-tamamlanma').textContent = d.tamamlanma_orani+'%';
+    g('an-iptal').textContent = d.iptal_orani+'%';
+    g('an-avg-seans').textContent = d.avg_seans_per_hasta;
+    var upEl=g('an-upcoming');
+    if(d.upcoming_randevular&&d.upcoming_randevular.length){
+      upEl.innerHTML=d.upcoming_randevular.map(function(r){
+        return '<div class="ri" style="margin-bottom:6px"><span class="rt" style="font-size:11px">'+fmtDate(r.tarih)+'</span>'
+          +'<div style="flex:1;font-size:13px">'+r.cnt+' randevu planlandı</div></div>';
+      }).join('');
+    } else { upEl.innerHTML='<div class="empty">Gelecek 7 günde randevu yok</div>'; }
+    var chartEl=g('an-daily-chart'),lblEl=g('an-daily-lbls');
+    if(d.daily_seanslar&&d.daily_seanslar.length){
+      var mx=Math.max.apply(null,d.daily_seanslar.map(function(x){return x.cnt;}));
+      chartEl.innerHTML=d.daily_seanslar.map(function(x){
+        var h=mx?Math.round((x.cnt/mx)*72):0;
+        return '<div style="flex:1;display:flex;flex-direction:column;align-items:center">'
+          +'<span style="font-size:9px;color:var(--tx3);margin-bottom:2px">'+x.cnt+'</span>'
+          +'<div title="'+x.cnt+' seans" style="width:100%;background:var(--acc);border-radius:4px 4px 0 0;height:'+h+'px;min-height:3px"></div></div>';
+      }).join('');
+      lblEl.innerHTML=d.daily_seanslar.map(function(x){
+        var p=x.tarih.split('-'); return '<div style="flex:1;font-size:9px;color:var(--tx3);text-align:center">'+p[2]+'.'+p[1]+'</div>';
+      }).join('');
+    } else { chartEl.innerHTML='<div class="empty" style="width:100%">Veri yok</div>'; }
+    var saatEl=g('an-saatler');
+    if(d.en_yogun_saatler&&d.en_yogun_saatler.length){
+      var mxs=d.en_yogun_saatler[0].cnt;
+      saatEl.innerHTML=d.en_yogun_saatler.map(function(s){
+        var pct=Math.round((s.cnt/mxs)*100);
+        return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">'
+          +'<span style="font-weight:600">'+s.saat+'</span><span style="color:var(--tx2)">'+s.cnt+' randevu</span></div>'
+          +'<div style="height:6px;background:var(--bdr);border-radius:3px"><div style="height:100%;width:'+pct+'%;background:var(--acc);border-radius:3px"></div></div></div>';
+      }).join('');
+    } else { saatEl.innerHTML='<div class="empty">Veri yok</div>'; }
+    var islEl=g('an-islemler');
+    if(d.top_islemler&&d.top_islemler.length){
+      islEl.innerHTML=d.top_islemler.map(function(x){
+        var lbl=ISLEM_LABELS[x.id]||x.id;
+        return '<span class="ibl" style="background:var(--as);color:var(--acc2);border:1px solid var(--acc)">'+lbl+': <strong>'+x.cnt+'</strong></span>';
+      }).join('');
+    } else { islEl.innerHTML='<div class="empty">Veri yok</div>'; }
+    var riskEl=g('an-risk');
+    if(d.risk_hastalar&&d.risk_hastalar.length){
+      riskEl.innerHTML=d.risk_hastalar.map(function(h){
+        var ss=h.son_seans?fmtDate(h.son_seans):'Hiç seans yok';
+        return '<div class="risk-item"><div class="risk-dot"></div>'
+          +'<div style="flex:1"><div style="font-weight:700;font-size:13px">'+h.ad+' '+h.soyad+'</div>'
+          +'<div style="font-size:11px;color:#b91c1c">'+(h.tani||'—')+' · Son: '+ss+'</div></div>'
+          +'<span class="badge b-r">'+h.toplam_seans+' seans</span></div>';
+      }).join('');
+    } else { riskEl.innerHTML='<div class="empty" style="color:var(--g)">✓ Risk altında hasta yok</div>'; }
+  } catch(e){ console.error('Analitik hata:',e); }
+}
+
+// ─── YAPAY ZEKA ──────────────────────────────────────────────────
+var aiHastaId=null, aiDocTip=null, aiDocText='';
+
+function hpInitAi(){
+  var inp=g('hp-ai-inp'),clr=g('hp-ai-clr'),dd=g('hp-ai-dd');
+  inp.addEventListener('focus',function(){inp.readOnly=false;hpBuildDDAi('');dd.classList.add('open');});
+  inp.addEventListener('blur',function(){setTimeout(function(){dd.classList.remove('open');if(aiHastaId){var h=hastalar.find(function(x){return x.id===aiHastaId;});if(h)inp.value=h.ad+' '+h.soyad;}else{inp.value='';}inp.readOnly=true;},200);});
+  inp.addEventListener('input',function(){hpBuildDDAi(inp.value);});
+  clr.addEventListener('click',function(){aiHastaId=null;inp.value='';inp.readOnly=false;inp.focus();g('ai-hasta-id').value='';clr.classList.remove('vis');hpBuildDDAi('');dd.classList.add('open');});
+}
+
+function hpBuildDDAi(filter){
+  filter=(filter||'').toLowerCase();
+  var dd=g('hp-ai-dd');
+  var fl=hastalar.filter(function(h){return(h.ad+' '+h.soyad+' '+(h.tani||'')).toLowerCase().indexOf(filter)!==-1;}).slice(0,12);
+  if(!fl.length){dd.innerHTML='<div class="hp-empty">Sonuç bulunamadı</div>';return;}
+  dd.innerHTML=fl.map(function(h){
+    var col=avColor(h.ad+h.soyad);
+    return '<div class="hp-opt" data-hid="'+h.id+'"><div class="hp-av" style="background:'+col+'">'+(h.ad[0]+h.soyad[0]).toUpperCase()+'</div>'
+      +'<div><div class="hp-name">'+h.ad+' '+h.soyad+'</div><div class="hp-sub">'+(h.tani||'—')+'</div></div></div>';
+  }).join('');
+  dd.querySelectorAll('.hp-opt').forEach(function(el){
+    el.addEventListener('mousedown',function(e){
+      e.preventDefault();aiHastaId=el.dataset.hid;
+      var h=hastalar.find(function(x){return x.id===aiHastaId;});
+      g('hp-ai-inp').value=h?h.ad+' '+h.soyad:'';g('hp-ai-inp').readOnly=true;
+      g('ai-hasta-id').value=aiHastaId;g('hp-ai-clr').classList.add('vis');dd.classList.remove('open');
+    });
+  });
+}
+
+function aiShowResult(txt,tip){aiDocText=txt;aiDocTip=tip;g('ai-doc-text').textContent=txt;g('ai-doc-result').style.display='block';}
+
+async function aiSeansNotu(){
+  if(!aiHastaId){toast('Hasta seçin!','err');return;}
+  var h=hastalar.find(function(x){return x.id===aiHastaId;});
+  var ss=await api('/api/seanslar?hasta_id='+aiHastaId+'&limit=1');
+  var ls=ss[0]||{};var isls=parseIslemler(ls.islemler);
+  g('ai-doc-result').style.display='none';
+  var btn=g('btn-ai-seans-notu');btn.innerHTML='<span class="spin"></span>';btn.disabled=true;
+  try{var res=await api('/api/ai/seans-notu',{method:'POST',body:JSON.stringify({hasta:{ad:h.ad,soyad:h.soyad,tani:h.tani,anm:h.anm},seans:{islemler:isls,agri:ls.agri,not_:ls.not_}})});aiShowResult(res.not,'seans_notu');}catch(e){toast('Hata: '+e.message,'err');}
+  btn.innerHTML='📝 Seans Notu';btn.disabled=false;
+}
+
+async function aiEpikriz(){
+  if(!aiHastaId){toast('Hasta seçin!','err');return;}
+  var h=hastalar.find(function(x){return x.id===aiHastaId;});
+  var ss=await api('/api/seanslar?hasta_id='+aiHastaId+'&limit=999');
+  var parsedS=ss.map(function(s){return{tarih:s.tarih,agri:s.agri,islemler:parseIslemler(s.islemler),not_:s.not_};});
+  g('ai-doc-result').style.display='none';
+  var btn=g('btn-ai-epikriz');btn.innerHTML='<span class="spin"></span>';btn.disabled=true;
+  try{var res=await api('/api/ai/epikriz',{method:'POST',body:JSON.stringify({hasta:h,seanslar:parsedS})});aiShowResult(res.epikriz,'epikriz');}catch(e){toast('Hata: '+e.message,'err');}
+  btn.innerHTML='📋 Epikriz';btn.disabled=false;
+}
+
+async function aiRandevuOneri(){
+  if(!aiHastaId){toast('Hasta seçin!','err');return;}
+  var h=hastalar.find(function(x){return x.id===aiHastaId;});
+  var ss=await api('/api/seanslar?hasta_id='+aiHastaId+'&limit=999');
+  var rdv=await api('/api/randevular?hasta_id='+aiHastaId);
+  g('ai-doc-result').style.display='none';
+  var btn=g('btn-ai-randevu-oneri');btn.innerHTML='<span class="spin"></span>';btn.disabled=true;
+  try{var res=await api('/api/ai/randevu-oneri',{method:'POST',body:JSON.stringify({hasta:h,seanslar:ss,randevular:rdv})});aiShowResult(res.oneri,'randevu_oneri');}catch(e){toast('Hata: '+e.message,'err');}
+  btn.innerHTML='📅 Randevu Önerisi';btn.disabled=false;
+}
+
+async function aiIlerleme(){
+  if(!aiHastaId){toast('Hasta seçin!','err');return;}
+  var h=hastalar.find(function(x){return x.id===aiHastaId;});
+  var ss=await api('/api/seanslar?hasta_id='+aiHastaId+'&limit=999');
+  g('ai-doc-result').style.display='none';
+  var btn=g('btn-ai-ilerleme');btn.innerHTML='<span class="spin"></span>';btn.disabled=true;
+  try{var res=await api('/api/ai/ilerleme-analiz',{method:'POST',body:JSON.stringify({hasta:h,seanslar:ss})});aiShowResult(res.analiz,'ilerleme');}catch(e){toast('Hata: '+e.message,'err');}
+  btn.innerHTML='📊 İlerleme Analizi';btn.disabled=false;
+}
+
+async function aiProtokol(){
+  var tani=g('ai-protokol-tani').value.trim();
+  if(!tani){toast('Tanı girin!','err');return;}
+  var resEl=g('ai-protokol-result');resEl.style.display='block';resEl.className='ai-result loading';resEl.textContent='🤖 Yapay zeka düşünüyor...';
+  var btn=g('btn-ai-protokol');btn.innerHTML='<span class="spin"></span>';btn.disabled=true;
+  try{var res=await api('/api/ai/tedavi-protokol',{method:'POST',body:JSON.stringify({tani:tani,hasta_bilgi:g('ai-protokol-bilgi').value})});resEl.className='ai-result';resEl.textContent=res.protokol;}catch(e){resEl.className='ai-result error';resEl.textContent='⚠️ Hata: '+e.message;}
+  btn.innerHTML='🤖 Protokol Oluştur';btn.disabled=false;
+}
+
+async function aiKaydet(){
+  if(!aiHastaId||!aiDocText)return;
+  try{await api('/api/ai_notlar',{method:'POST',body:JSON.stringify({hasta_id:aiHastaId,tip:aiDocTip||'not',icerik:aiDocText})});toast('Not kaydedildi!');if(g('ai-notlar-hasta').value===aiHastaId)renderAiNotlar(aiHastaId);}catch(e){toast('Kayıt hatası','err');}
+}
+
+function aiYazdir(){
+  if(!aiDocText)return;
+  var muayenehane='Uzm. Dr. Zuhal Karakoyun Fizik Tedavi ve Rehabilitasyon Özel Muayenehanesi';
+  var w=window.open('','_blank');
+  w.document.write('<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>'+muayenehane+'</title>'
+    +'<style>body{font-family:Georgia,serif;color:#0f172a;padding:40px;font-size:14px;line-height:1.9;max-width:780px;margin:0 auto}'
+    +'h1{font-size:15px;font-weight:bold;text-align:center;border-bottom:2px solid #0ea5e9;padding-bottom:12px;margin-bottom:20px;color:#0284c7}'
+    +'.date{text-align:right;font-size:12px;color:#64748b;margin-bottom:20px}'
+    +'@media print{body{padding:18px}}</style></head><body>'
+    +'<h1>'+muayenehane+'</h1>'
+    +'<div class="date">'+new Date().toLocaleDateString('tr-TR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+'</div>'
+    +'<div style="white-space:pre-wrap">'+aiDocText+'</div></body></html>');
+  w.document.close();setTimeout(function(){w.print();},400);
+}
+
+async function renderAiNotlar(hastaId){
+  var el=g('ai-notlar-list');
+  if(!hastaId){el.innerHTML='<div class="empty">Hasta seçin</div>';return;}
+  el.innerHTML='<div class="empty">Yükleniyor...</div>';
+  try{
+    var notlar=await api('/api/ai_notlar/'+hastaId);
+    if(!notlar.length){el.innerHTML='<div class="empty">Bu hasta için kayıtlı AI notu yok</div>';return;}
+    var tipRenk={seans_notu:'var(--acc)',epikriz:'var(--g)',randevu_oneri:'var(--w)',ilerleme:'var(--p)',protokol:'var(--d)'};
+    var tipLbl={seans_notu:'Seans Notu',epikriz:'Epikriz',randevu_oneri:'Randevu Önerisi',ilerleme:'İlerleme Analizi',protokol:'Protokol'};
+    el.innerHTML=notlar.map(function(n){
+      return '<div style="border:1px solid var(--bdr);border-radius:var(--r2);padding:14px;margin-bottom:10px">'
+        +'<div style="display:flex;justify-content:space-between;margin-bottom:8px">'
+        +'<span style="font-size:11px;font-weight:700;color:'+(tipRenk[n.tip]||'var(--acc)')+';text-transform:uppercase">'+(tipLbl[n.tip]||n.tip)+'</span>'
+        +'<span style="font-size:11px;color:var(--tx3)">'+fmtDate(n.olusturma.split("T")[0])+'</span></div>'
+        +'<div style="font-size:12px;color:var(--tx2);white-space:pre-wrap;max-height:90px;overflow:hidden">'+n.icerik+'</div>'
+        +'<button class="btn btn-sm" style="margin-top:8px;font-size:11px" data-np="'+encodeURIComponent(n.icerik)+'">🖨️ Yazdır</button>'
+        +'</div>';
+    }).join('');
+    el.querySelectorAll('[data-np]').forEach(function(b){
+      b.addEventListener('click',function(){aiDocText=decodeURIComponent(b.dataset.np);aiYazdir();});
+    });
+  }catch(e){el.innerHTML='<div class="empty">Yüklenemedi</div>';}
+}
+
+function updateAiNotlarSel(){
+  var el=g('ai-notlar-hasta');var v=el.value;
+  el.innerHTML='<option value="">Hasta seçin...</option>'+hastalar.map(function(h){return'<option value="'+h.id+'">'+h.ad+' '+h.soyad+'</option>';}).join('');
+  el.value=v;
+}
+
+// ─── INIT ───────────────────────────────────────────────────────
+function init() {
+  g('tb-date').textContent=new Date().toLocaleDateString('tr-TR',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  var today=new Date().toISOString().split('T')[0];
+  g('s-tarih').value=today;
+  g('s-saat').value=new Date().toTimeString().slice(0,5);
+
+  // Nav
+  g('ni-dash').addEventListener('click',function(){navTo('dash');});
+  g('ni-hastalar').addEventListener('click',function(){navTo('hastalar');});
+  g('ni-randevular').addEventListener('click',function(){navTo('randevular');});
+  g('ni-seanslar').addEventListener('click',function(){navTo('seanslar');});
+  g('ni-raporlar').addEventListener('click',function(){navTo('raporlar');});
+  // Mobile bottom nav
+  g('mn-dash').addEventListener('click',function(){navTo('dash');});
+  g('mn-hastalar').addEventListener('click',function(){navTo('hastalar');});
+  g('mn-randevular').addEventListener('click',function(){navTo('randevular');});
+  g('mn-seanslar').addEventListener('click',function(){navTo('seanslar');});
+  g('mn-raporlar').addEventListener('click',function(){navTo('raporlar');});
+  g('ni-analitik').addEventListener('click',function(){navTo('analitik');});
+  g('ni-yapay-zeka').addEventListener('click',function(){navTo('yapay-zeka');});
+  g('mn-analitik').addEventListener('click',function(){navTo('analitik');});
+  g('mn-yapay-zeka').addEventListener('click',function(){navTo('yapay-zeka');});
+  g('btn-dash-r').addEventListener('click',function(){navTo('randevular');});
+  g('btn-dash-s').addEventListener('click',function(){navTo('seanslar');});
+
+  // Hasta butonları
+  g('btn-yeni-hasta').addEventListener('click',function(){openHasta();});
+  g('btn-hasta-ekle').addEventListener('click',function(){openHasta();});
+  g('h-search').addEventListener('input',renderH);
+
+  // Hasta modal
+  g('hm-close').addEventListener('click',function(){closeModal('ov-hasta');});
+  g('hm-iptal').addEventListener('click',function(){closeModal('ov-hasta');});
+  g('hm-btn').addEventListener('click',saveHasta);
+  g('tb-ki').addEventListener('click',function(){ hmSwitchTab('ki'); });
+  g('tb-ti').addEventListener('click',function(){ hmSwitchTab('ti'); });
+  g('tb-rd').addEventListener('click',function(){
+    hmSwitchTab('rd');
+    if (editHId) hrOpenTab(editHId);
+    else { g('hr-uyari').style.display='block'; g('hr-form').style.display='none'; }
+  });
+  g('hr-ekle-btn').addEventListener('click', hrEkleRandevu);
+  g('hr-tarih').addEventListener('change', function(){ if(editHId) hrLoadSlots(editHId); });
+  g('hr-fiz').addEventListener('change', function(){ if(editHId) hrLoadSlots(editHId); });
+
+  // Randevu
+  g('btn-randevu-ekle').addEventListener('click',openRandevu);
+  g('btn-cal-prev').addEventListener('click',function(){calM--;if(calM<0){calM=11;calY--;}renderCal();});
+  g('btn-cal-next').addEventListener('click',function(){calM++;if(calM>11){calM=0;calY++;}renderCal();});
+  g('rm-close').addEventListener('click',function(){closeModal('ov-randevu');});
+  g('rm-iptal').addEventListener('click',function(){closeModal('ov-randevu');});
+  g('rm-btn').addEventListener('click',saveRandevu);
+  g('r-tarih').addEventListener('change',loadSlots);
+  g('r-fiz').addEventListener('change',loadSlots);
+
+  // Seans
+  g('seans-btn').addEventListener('click',saveSeans);
+  g('s-agri').addEventListener('input',function(){g('agri-v').textContent=this.value;});
+
+  // Detay
+  g('det-close').addEventListener('click',function(){closeModal('ov-detay');});
+
+  // Rapor
+  g('btn-rapor-getir').addEventListener('click',renderRapor);
+  g('btn-rapor-yazdir').addEventListener('click',printRapor);
+
+  // Picker'lar (s=seans, r=randevu)
+  hpInit('s'); hpInit('r');
+
+  // Chip'ler
+  initChips();
+  // AI butonları
+  g('btn-ai-seans-notu').addEventListener('click', aiSeansNotu);
+  g('btn-ai-epikriz').addEventListener('click', aiEpikriz);
+  g('btn-ai-randevu-oneri').addEventListener('click', aiRandevuOneri);
+  g('btn-ai-ilerleme').addEventListener('click', aiIlerleme);
+  g('btn-ai-protokol').addEventListener('click', aiProtokol);
+  g('btn-ai-doc-kaydet').addEventListener('click', aiKaydet);
+  g('btn-ai-doc-yazdir').addEventListener('click', aiYazdir);
+  g('ai-notlar-hasta').addEventListener('change', function(){ renderAiNotlar(this.value); });
+  hpInitAi();
+
+  // Veri yükle
+  g('sync-lbl').textContent='Bağlanıyor...';
+  loadHastalar().then(function(){
+    updateRaporSel();
+    updateAiNotlarSel();
+    renderDash();
+    g('sync-lbl').textContent='Bağlı ✓';
+  }).catch(function(){
+    g('sync-lbl').textContent='Bağlantı hatası!';
+  });
+}
+
+init();
+</script>
+</body>
+</html>
