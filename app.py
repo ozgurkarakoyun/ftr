@@ -174,6 +174,17 @@ def add_seans():
     conn.commit(); conn.close()
     return jsonify({'id': sid}), 201
 
+@app.route('/api/seanslar/<sid>', methods=['PUT'])
+def update_seans(sid):
+    d = request.json
+    conn = get_db()
+    conn.execute("""UPDATE seanslar SET hasta_id=?,fiz=?,tarih=?,saat=?,islemler=?,not_=?,agri=?
+        WHERE id=?""",
+        (d['hasta_id'], d.get('fiz','Fzt. 1'), d['tarih'], d.get('saat'),
+         json.dumps(d.get('islemler',[])), d.get('not_'), d.get('agri',5), sid))
+    conn.commit(); conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/seanslar/<sid>', methods=['DELETE'])
 def delete_seans(sid):
     conn = get_db()
