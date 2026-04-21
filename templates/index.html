@@ -285,13 +285,15 @@ tr:last-child td{border-bottom:none}
 
 <!-- HASTA MODAL -->
 <div class="ov" id="ov-hasta">
-  <div class="mod">
+  <div class="mod" style="max-width:720px">
     <div class="mh"><span class="mt" id="hm-t">Yeni Hasta</span><button class="mc" id="hm-close">✕</button></div>
     <div class="mb">
       <div class="tabs">
-        <button class="tb act" id="tb-ki">Kişisel</button>
-        <button class="tb" id="tb-ti">Tıbbi</button>
+        <button class="tb act" id="tb-ki">👤 Kişisel</button>
+        <button class="tb" id="tb-ti">🏥 Tıbbi</button>
+        <button class="tb" id="tb-rd">📅 Randevu</button>
       </div>
+      <!-- KİŞİSEL -->
       <div class="tp act" id="tp-ki">
         <div style="display:flex;flex-direction:column;gap:13px">
           <div class="g2">
@@ -306,6 +308,7 @@ tr:last-child td{border-bottom:none}
           <div class="fg"><label>E-posta</label><input type="email" id="h-email" placeholder="ornek@mail.com"></div>
         </div>
       </div>
+      <!-- TIBBİ -->
       <div class="tp" id="tp-ti">
         <div style="display:flex;flex-direction:column;gap:13px">
           <div class="fg"><label>Tanı / Şikayet</label><input id="h-tani" placeholder="Lumbar disk hernisi..."></div>
@@ -315,6 +318,37 @@ tr:last-child td{border-bottom:none}
           </div>
           <div class="fg"><label>Anamnez / Öykü</label><textarea id="h-anm" placeholder="Geçmiş rahatsızlıklar, ilaçlar..."></textarea></div>
           <div class="fg"><label>Notlar</label><textarea id="h-not" placeholder="Ek notlar..."></textarea></div>
+        </div>
+      </div>
+      <!-- RANDEVU SEKMESİ -->
+      <div class="tp" id="tp-rd">
+        <div id="hr-uyari" style="background:var(--ws);border:1px solid var(--w);color:#92400e;border-radius:var(--r2);padding:12px 16px;font-size:13px;display:none">
+          ⚠️ Randevu eklemek için önce hastayı kaydedin, ardından bu sekmeye dönün.
+        </div>
+        <div id="hr-form" style="display:none;flex-direction:column;gap:14px">
+          <div style="background:var(--as);border-radius:var(--r2);padding:10px 14px;font-size:13px;color:var(--acc2);font-weight:600" id="hr-hasta-lbl"></div>
+          <div class="g2">
+            <div class="fg"><label>Tarih</label><input type="date" id="hr-tarih"></div>
+            <div class="fg"><label>Fizyoterapist</label>
+              <select id="hr-fiz"><option value="Fzt. 1">Fzt. 1</option><option value="Fzt. 2">Fzt. 2</option></select>
+            </div>
+          </div>
+          <div class="fg">
+            <label>Saat Seçin</label>
+            <div class="slot-grid" id="hr-slot-grid">
+              <div style="grid-column:span 3;text-align:center;padding:20px;font-size:12px;color:var(--tx2)">Tarih seçince slotlar yüklenir</div>
+            </div>
+            <div class="warn-bar" id="hr-slot-warn">⚠️ <span id="hr-slot-warn-txt"></span></div>
+            <input type="hidden" id="hr-saat">
+          </div>
+          <div class="g2">
+            <div class="fg"><label>Durum</label>
+              <select id="hr-durum"><option value="Planlandı">Planlandı</option><option value="Tamamlandı">Tamamlandı</option><option value="İptal">İptal</option></select>
+            </div>
+            <div class="fg"><label>Not</label><input id="hr-not" placeholder="Randevu notu..."></div>
+          </div>
+          <button class="btn btn-p" style="width:100%" id="hr-ekle-btn">+ Randevu Ekle</button>
+          <div id="hr-list"></div>
         </div>
       </div>
     </div>
@@ -607,13 +641,17 @@ function chooseSlot(s) {
 // ─── HASTA CRUD ──────────────────────────────────────────────────
 async function loadHastalar() { hastalar = await api('/api/hastalar'); }
 
+// ─── HASTA MODAL RANDEVU SLOT STATE ─────────────────────────────
+var hrSlotCounts = {};
+var hrChosenSlot = null;
+
 function openHasta(id) {
   editHId = id || null;
   ['h-ad','h-soyad','h-tel','h-email','h-tani','h-anm','h-not'].forEach(function(f){ g(f).value=''; });
   g('h-dogum').value=''; g('h-slim').value='';
   g('h-cins').value='K'; g('h-fiz').value='Fzt. 1';
-  g('tp-ki').classList.add('act'); g('tp-ti').classList.remove('act');
-  g('tb-ki').classList.add('act'); g('tb-ti').classList.remove('act');
+  // Reset to kisisel tab
+  hmSwitchTab('ki');
   if (editHId) {
     var h = hastalar.find(function(x){ return x.id===editHId; });
     if (h) {
@@ -624,9 +662,149 @@ function openHasta(id) {
       g('h-fiz').value=h.fiz||'Fzt. 1'; g('h-anm').value=h.anm||'';
       g('h-not').value=h.not_||'';
     }
+    // Show randevu tab for existing patient
+    hrOpenTab(editHId);
+  } else {
+    // New patient: show warning in randevu tab
+    g('hr-uyari').style.display='block';
+    g('hr-form').style.display='none';
   }
   g('hm-t').textContent = editHId ? 'Hasta Düzenle' : 'Yeni Hasta';
   openModal('ov-hasta');
+}
+
+function hmSwitchTab(key) {
+  ['ki','ti','rd'].forEach(function(k){
+    g('tp-'+k).classList.remove('act');
+    g('tb-'+k).classList.remove('act');
+  });
+  g('tp-'+key).classList.add('act');
+  g('tb-'+key).classList.add('act');
+}
+
+function hrOpenTab(hastaId) {
+  var h = hastalar.find(function(x){ return x.id===hastaId; });
+  if (!h) return;
+  g('hr-uyari').style.display='none';
+  g('hr-form').style.display='flex';
+  g('hr-hasta-lbl').textContent='Hasta: '+h.ad+' '+h.soyad;
+  // Set default fiz from hasta
+  g('hr-fiz').value = h.fiz||'Fzt. 1';
+  // Set today
+  g('hr-tarih').value = new Date().toISOString().split('T')[0];
+  g('hr-saat').value='';
+  g('hr-not').value='';
+  g('hr-durum').value='Planlandı';
+  hrChosenSlot=null;
+  g('hr-slot-warn').classList.remove('show');
+  hrLoadSlots(hastaId);
+  hrRenderList(hastaId);
+}
+
+async function hrLoadSlots(hastaId) {
+  var tarih = g('hr-tarih').value;
+  var grid = g('hr-slot-grid');
+  hrChosenSlot=null; g('hr-saat').value='';
+  g('hr-slot-warn').classList.remove('show');
+  if (!tarih) {
+    grid.innerHTML='<div style="grid-column:span 3;text-align:center;padding:16px;font-size:12px;color:var(--tx2)">Tarih seçin</div>';
+    return;
+  }
+  grid.innerHTML='<div style="grid-column:span 3;text-align:center;padding:12px;font-size:12px;color:var(--tx2)">Yükleniyor...</div>';
+  try {
+    var list = await api('/api/randevular?tarih='+tarih);
+    hrSlotCounts={};
+    ALL_SLOTS.forEach(function(s){ hrSlotCounts[s]=0; });
+    list.forEach(function(r){ if(hrSlotCounts[r.saat]!==undefined) hrSlotCounts[r.saat]++; else hrSlotCounts[r.saat]=1; });
+    hrRenderSlots(hastaId);
+  } catch(e) {
+    grid.innerHTML='<div style="grid-column:span 3;text-align:center;padding:12px;font-size:12px;color:var(--d)">Yüklenemedi</div>';
+  }
+}
+
+function hrRenderSlots(hastaId) {
+  var grid = g('hr-slot-grid');
+  grid.innerHTML = ALL_SLOTS.map(function(slot){
+    var cnt=hrSlotCounts[slot]||0, full=cnt>=MAX_PER_SLOT, near=cnt===MAX_PER_SLOT-1;
+    var cls='slot'+(slot===hrChosenSlot?' slot-sel':full?' slot-full':near?' slot-warn':'');
+    var lbl=full?'<div class="slot-cnt">Dolu ('+cnt+'/'+MAX_PER_SLOT+')</div>'
+           :cnt>0?'<div class="slot-cnt">'+cnt+'/'+MAX_PER_SLOT+' dolu</div>'
+           :'<div class="slot-cnt">Boş</div>';
+    return '<div class="'+cls+'"'+(full?'':' data-slot="'+slot+'" data-hid="'+hastaId+'"')+'>'
+      +'<div class="slot-time">'+slot+'</div>'+lbl+'</div>';
+  }).join('');
+  grid.querySelectorAll('[data-slot]').forEach(function(el){
+    el.addEventListener('click', function(){ hrChooseSlot(el.dataset.slot, el.dataset.hid); });
+  });
+}
+
+function hrChooseSlot(s, hastaId) {
+  hrChosenSlot=s; g('hr-saat').value=s;
+  var cnt=(hrSlotCounts[s]||0)+1;
+  var wb=g('hr-slot-warn'), wt=g('hr-slot-warn-txt');
+  if(cnt>MAX_PER_SLOT){
+    wt.textContent='Bu saatte zaten '+hrSlotCounts[s]+' randevu var!';
+    wb.style.background='var(--ds)';wb.style.borderColor='var(--d)';wb.style.color='#b91c1c';
+    wb.classList.add('show');
+  } else if(cnt===MAX_PER_SLOT){
+    wt.textContent='Bu eklemeyle saat '+s+' dolacak ('+cnt+'/'+MAX_PER_SLOT+').';
+    wb.style.background='var(--ws)';wb.style.borderColor='var(--w)';wb.style.color='#92400e';
+    wb.classList.add('show');
+  } else { wb.classList.remove('show'); }
+  hrRenderSlots(hastaId);
+}
+
+async function hrEkleRandevu() {
+  if (!editHId) { toast('Önce hastayı kaydedin!','err'); return; }
+  var saat=g('hr-saat').value;
+  if (!saat) { toast('Saat slotu seçin!','err'); return; }
+  if ((hrSlotCounts[saat]||0)>=MAX_PER_SLOT) {
+    if (!confirm('Bu saatte '+hrSlotCounts[saat]+' randevu var (max '+MAX_PER_SLOT+'). Yine de eklensin mi?')) return;
+  }
+  var btn=g('hr-ekle-btn'); btn.innerHTML='<span class="spin"></span>Ekleniyor...'; btn.disabled=true;
+  try {
+    await api('/api/randevular',{method:'POST',body:JSON.stringify({
+      hasta_id:editHId, tarih:g('hr-tarih').value, saat:saat,
+      fiz:g('hr-fiz').value, durum:g('hr-durum').value, not_:g('hr-not').value
+    })});
+    // Reset slot selection
+    hrChosenSlot=null; g('hr-saat').value=''; g('hr-slot-warn').classList.remove('show');
+    g('hr-not').value=''; g('hr-durum').value='Planlandı';
+    await hrLoadSlots(editHId);
+    await hrRenderList(editHId);
+    updateStats();
+    toast('Randevu eklendi!');
+  } catch(e) { toast('Hata: '+e.message,'err'); }
+  btn.innerHTML='+ Randevu Ekle'; btn.disabled=false;
+}
+
+async function hrRenderList(hastaId) {
+  var el=g('hr-list');
+  var randevular=await api('/api/randevular?hasta_id='+hastaId);
+  randevular.sort(function(a,b){ return (a.tarih+a.saat).localeCompare(b.tarih+b.saat); });
+  if (!randevular.length) {
+    el.innerHTML='<div style="font-size:12px;color:var(--tx2);text-align:center;padding:12px">Henüz randevu eklenmemiş</div>';
+    return;
+  }
+  el.innerHTML='<div style="font-size:11px;font-weight:700;color:var(--tx2);text-transform:uppercase;margin-bottom:8px">Mevcut Randevular</div>'
+    +randevular.map(function(r){
+      return '<div class="ri" style="margin-bottom:6px">'
+        +'<span class="rt">'+r.saat+'</span>'
+        +'<div style="flex:1"><div style="font-weight:600;font-size:13px">'+fmtDate(r.tarih)+'</div>'
+        +'<div style="font-size:11px;color:var(--tx2)">'+r.fiz+(r.not_?' · '+r.not_:'')+'</div></div>'
+        +dBadge(r.durum)
+        +'<button class="btn btn-sm btn-d" data-rdel="'+r.id+'">Sil</button></div>';
+    }).join('');
+  el.querySelectorAll('[data-rdel]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      if(!confirm('Bu randevu silinsin mi?')) return;
+      await api('/api/randevular/'+b.dataset.rdel,{method:'DELETE'});
+      await hrLoadSlots(hastaId);
+      await hrRenderList(hastaId);
+      updateStats();
+      toast('Randevu silindi.');
+    });
+  });
 }
 
 async function saveHasta() {
@@ -637,9 +815,23 @@ async function saveHasta() {
     tel:g('h-tel').value,email:g('h-email').value,tani:g('h-tani').value,
     slim:g('h-slim').value||null,fiz:g('h-fiz').value,anm:g('h-anm').value,not_:g('h-not').value};
   try {
-    if (editHId) await api('/api/hastalar/'+editHId,{method:'PUT',body:JSON.stringify(d)});
-    else await api('/api/hastalar',{method:'POST',body:JSON.stringify(d)});
-    await loadHastalar(); closeModal('ov-hasta'); renderH(); updateStats(); toast('Hasta kaydedildi!');
+    var wasNew = !editHId;
+    if (editHId) {
+      await api('/api/hastalar/'+editHId,{method:'PUT',body:JSON.stringify(d)});
+    } else {
+      var res = await api('/api/hastalar',{method:'POST',body:JSON.stringify(d)});
+      editHId = res.id;
+    }
+    await loadHastalar();
+    renderH();
+    updateStats();
+    toast('Hasta kaydedildi!');
+    btn.innerHTML='Kaydet'; btn.disabled=false;
+    // After save: switch to randevu tab automatically
+    hmSwitchTab('rd');
+    hrOpenTab(editHId);
+    g('hm-btn').textContent='Güncelle';
+    return;
   } catch(e) { toast('Hata: '+e.message,'err'); }
   btn.innerHTML='Kaydet'; btn.disabled=false;
 }
@@ -958,14 +1150,16 @@ function init() {
   g('hm-close').addEventListener('click',function(){closeModal('ov-hasta');});
   g('hm-iptal').addEventListener('click',function(){closeModal('ov-hasta');});
   g('hm-btn').addEventListener('click',saveHasta);
-  g('tb-ki').addEventListener('click',function(){
-    g('tp-ki').classList.add('act');g('tp-ti').classList.remove('act');
-    g('tb-ki').classList.add('act');g('tb-ti').classList.remove('act');
+  g('tb-ki').addEventListener('click',function(){ hmSwitchTab('ki'); });
+  g('tb-ti').addEventListener('click',function(){ hmSwitchTab('ti'); });
+  g('tb-rd').addEventListener('click',function(){
+    hmSwitchTab('rd');
+    if (editHId) hrOpenTab(editHId);
+    else { g('hr-uyari').style.display='block'; g('hr-form').style.display='none'; }
   });
-  g('tb-ti').addEventListener('click',function(){
-    g('tp-ti').classList.add('act');g('tp-ki').classList.remove('act');
-    g('tb-ti').classList.add('act');g('tb-ki').classList.remove('act');
-  });
+  g('hr-ekle-btn').addEventListener('click', hrEkleRandevu);
+  g('hr-tarih').addEventListener('change', function(){ if(editHId) hrLoadSlots(editHId); });
+  g('hr-fiz').addEventListener('change', function(){ if(editHId) hrLoadSlots(editHId); });
 
   // Randevu
   g('btn-randevu-ekle').addEventListener('click',openRandevu);
