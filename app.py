@@ -145,6 +145,15 @@ def add_randevu():
     conn.close()
     return jsonify({'id': rid}), 201
 
+@app.route('/api/randevular/<rid>/durum', methods=['PATCH'])
+def update_randevu_durum(rid):
+    d = request.json
+    conn = get_db()
+    conn.execute("UPDATE randevular SET durum=? WHERE id=?", (d.get('durum','Tamamlandı'), rid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/randevular/<rid>', methods=['DELETE'])
 def delete_randevu(rid):
     conn = get_db()
