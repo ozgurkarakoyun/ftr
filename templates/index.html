@@ -1271,7 +1271,7 @@ async function renderCal() {
 function seansGir(hastaId, tarih, saat, fiz) {
   // Seans sekmesine git, formu doldur
   navTo('seanslar');
-  // Hasta picker'ı doldur
+  // Hasta picker doldur
   hpReset('s');
   hpSelect('s', hastaId);
   // Tarih, saat, fiz
@@ -1440,44 +1440,14 @@ async function renderRapor() {
 function printRapor() {
   var c=g('rap-inner'); if(!c){toast('Önce raporu getirin.');return;}
   var w=window.open('','_blank');
-  w.document.write('<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>FizTak Rapor</title>'
-    +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif;color:#0f172a;padding:28px;font-size:13px}'
+  var css='*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,sans-serif;color:#0f172a;padding:28px;font-size:13px}'
     +'table{width:100%;border-collapse:collapse}th{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;padding:8px 12px;text-align:left;border-bottom:1px solid #e2e8f0;background:#f8fafc}'
     +'td{padding:9px 12px;border-bottom:.5px solid #e2e8f0;font-size:12px}'
     +'.ibl{display:inline-block;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:600;margin:2px}'
     +'.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}'
     +'.stat{background:#f8fafc;border-radius:8px;padding:12px}.stat-n{font-size:10px;font-weight:700;color:#475569;text-transform:uppercase}.stat-v{font-size:20px;font-weight:700;margin-top:4px}'
-    +'@media print{body{padding:14px}}
-/* ══ AI PANEL ════════════════════════════════════════════════════ */
-.ai-card{background:linear-gradient(135deg,#1e1b4b,#312e81);border-radius:var(--r);padding:20px;color:#fff;margin-bottom:16px}
-.ai-card-title{font-size:13px;font-weight:700;opacity:.7;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.ai-card-val{font-size:28px;font-weight:700}
-.ai-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:100px;font-size:12px;font-weight:600;background:rgba(255,255,255,.15);color:#fff;margin:3px}
-.ai-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:var(--r2);font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:'DM Sans',sans-serif;transition:all .15s;min-height:44px}
-.ai-btn-p{background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff}
-.ai-btn-p:active{opacity:.85}
-.ai-btn-g{background:linear-gradient(135deg,#059669,#10b981);color:#fff}
-.ai-btn-g:active{opacity:.85}
-.ai-btn-b{background:linear-gradient(135deg,#0284c7,#0ea5e9);color:#fff}
-.ai-btn-b:active{opacity:.85}
-.ai-btn-o{background:linear-gradient(135deg,#d97706,#f59e0b);color:#fff}
-.ai-btn-o:active{opacity:.85}
-.ai-result{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--r2);padding:16px;font-size:13px;line-height:1.7;white-space:pre-wrap;margin-top:12px;max-height:320px;overflow-y:auto}
-.ai-result.loading{color:var(--tx2);font-style:italic}
-.ai-result.error{color:var(--d);background:var(--ds)}
-.chart-bar-wrap{display:flex;align-items:flex-end;gap:4px;height:80px;margin:8px 0}
-.chart-bar{flex:1;background:var(--acc);border-radius:4px 4px 0 0;min-width:12px;transition:height .3s;position:relative;cursor:pointer}
-.chart-bar:hover{opacity:.8}
-.chart-bar-lbl{font-size:9px;color:var(--tx3);text-align:center;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.risk-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r2);background:var(--ds);border:1px solid var(--d);margin-bottom:6px}
-.risk-dot{width:8px;height:8px;border-radius:50%;background:var(--d);flex-shrink:0}
-.anal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
-.anal-stat{background:var(--surf2);border-radius:var(--r2);padding:14px;text-align:center;border:1px solid var(--bdr)}
-.anal-stat-v{font-size:22px;font-weight:700;color:var(--acc)}
-.anal-stat-n{font-size:11px;color:var(--tx2);margin-top:3px}
-@media(max-width:768px){.anal-grid{grid-template-columns:repeat(2,1fr)}}
-.epikriz-preview{background:#fff;border:1px solid var(--bdr);border-radius:var(--r2);padding:20px;font-size:13px;line-height:1.8;white-space:pre-wrap;font-family:'Georgia',serif;max-height:400px;overflow-y:auto}
-</style></head><body>'+c.innerHTML+'</body></html>');
+    +'@media print{body{padding:14px}}';
+  w.document.write('<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>FizTak Rapor</title><style>'+css+'</style></head><body>'+c.innerHTML+'</body></html>');
   w.document.close(); setTimeout(function(){w.print();},400);
 }
 
@@ -1743,10 +1713,10 @@ function init() {
   g('btn-rapor-getir').addEventListener('click',renderRapor);
   g('btn-rapor-yazdir').addEventListener('click',printRapor);
 
-  // Picker'lar (s=seans, r=randevu)
+  // Picker init
   hpInit('s'); hpInit('r');
 
-  // Chip'ler
+  // Chipler
   initChips();
   // AI butonları
   g('btn-ai-seans-notu').addEventListener('click', aiSeansNotu);
