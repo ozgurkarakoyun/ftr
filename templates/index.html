@@ -39,9 +39,10 @@ input,select,textarea,button{font-size:16px!important} /* prevent iOS zoom */
 .main{margin-left:230px;flex:1;min-height:100vh}
 
 /* Mobile bottom nav */
-.mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:var(--bot-nav);background:var(--surf);border-top:1px solid var(--bdr);z-index:200;align-items:stretch}
-.mn-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;background:none;color:var(--tx2);font-family:'DM Sans',sans-serif;font-size:10px;font-weight:500;cursor:pointer;padding:6px 2px;transition:color .15s;min-height:44px}
-.mn-btn .ic{font-size:20px;line-height:1}
+.mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:var(--bot-nav);background:var(--surf);border-top:1px solid var(--bdr);z-index:200;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.mob-nav::-webkit-scrollbar{display:none}
+.mn-btn{flex:0 0 auto;min-width:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:none;background:none;color:var(--tx2);font-family:'DM Sans',sans-serif;font-size:9px;font-weight:500;cursor:pointer;padding:5px 4px;transition:color .15s;min-height:44px}
+.mn-btn .ic{font-size:18px;line-height:1}
 .mn-btn.act{color:var(--acc)}
 .mn-btn.act .ic{transform:scale(1.1)}
 
@@ -359,7 +360,10 @@ tr:last-child td{border-bottom:none}
       <div class="sec" id="sec-seanslar">
         <div class="g2 seans-layout" style="align-items:start">
           <div class="card">
-            <div class="ch"><span class="ct">⚡ Yeni Seans Girişi</span></div>
+            <div class="ch">
+              <span class="ct" id="seans-form-title">⚡ Yeni Seans Girişi</span>
+              <button class="btn btn-sm" id="seans-iptal-btn" style="display:none;color:var(--d);border-color:var(--d)">✕ İptal</button>
+            </div>
             <div class="cb">
               <div style="display:flex;flex-direction:column;gap:14px">
                 <div class="g2">
@@ -694,6 +698,7 @@ var selDate = new Date().toISOString().split('T')[0];
 var calHasR = {};
 var slotCounts = {};
 var chosenSlot = null;          // ← "selSlot" değil, fonksiyonla çakışmaz
+var editSeansId = null;          // Düzenlenecek seans ID
 var pickerVal = { s: null, r: null };
 
 var ISLEMLER = [
@@ -1269,6 +1274,8 @@ async function renderCal() {
 
 // ─── RANDEVUDAN SEANS GİRİŞİ ────────────────────────────────────
 function seansGir(hastaId, tarih, saat, fiz) {
+  // Duzenleme modunu temizle
+  editSeansId=null;
   // Seans sekmesine git, formu doldur
   navTo('seanslar');
   // Hasta picker doldur
@@ -1340,26 +1347,33 @@ async function saveSeans() {
   var hId=g('s-hasta').value;
   if(!hId){toast('Hasta seçin!','err');return;}
   if(!selIslArr.length){toast('En az bir işlem seçin!','err');return;}
-  var btn=g('seans-btn'); btn.innerHTML='<span class="spin"></span>Kaydediliyor...'; btn.disabled=true;
+  var btn=g('seans-btn');
+  btn.innerHTML='<span class="spin"></span>Kaydediliyor...'; btn.disabled=true;
+  var payload={hasta_id:hId,fiz:g('s-fiz').value,tarih:g('s-tarih').value,
+    saat:g('s-saat').value,islemler:selIslArr,not_:g('s-not').value,agri:g('s-agri').value};
   try {
-    await api('/api/seanslar',{method:'POST',body:JSON.stringify({
-      hasta_id:hId,fiz:g('s-fiz').value,tarih:g('s-tarih').value,
-      saat:g('s-saat').value,islemler:selIslArr,not_:g('s-not').value,agri:g('s-agri').value
-    })});
-    // Aynı hasta + tarih + saat için bekleyen randevu varsa "Tamamlandı" yap
-    try {
-      var tarih=g('s-tarih').value, saat=g('s-saat').value;
-      var rdvList=await api('/api/randevular?hasta_id='+hId);
-      var eslesme=rdvList.filter(function(r){return r.tarih===tarih&&r.saat===saat&&r.durum==='Planlandı';});
-      for(var i=0;i<eslesme.length;i++){
-        await api('/api/randevular/'+eslesme[i].id+'/durum',{method:'PATCH',body:JSON.stringify({durum:'Tamamlandı'})});
-      }
-    } catch(e2){}
-    selIslArr=[]; document.querySelectorAll('.chip').forEach(function(c){c.classList.remove('on');});
-    g('s-not').value=''; g('s-agri').value=5; g('agri-v').textContent='5';
-    hpReset('s'); await renderSW(); updateStats(); toast('Seans kaydedildi!');
+    if(editSeansId) {
+      // Güncelle
+      await api('/api/seanslar/'+editSeansId,{method:'PUT',body:JSON.stringify(payload)});
+      toast('Seans güncellendi!');
+    } else {
+      // Yeni kayıt
+      await api('/api/seanslar',{method:'POST',body:JSON.stringify(payload)});
+      // Aynı hasta+tarih+saat randevusunu Tamamlandı yap
+      try {
+        var rdvList=await api('/api/randevular?hasta_id='+hId);
+        var eslesme=rdvList.filter(function(r){return r.tarih===payload.tarih&&r.saat===payload.saat&&r.durum==='Planlandı';});
+        for(var i=0;i<eslesme.length;i++){
+          await api('/api/randevular/'+eslesme[i].id+'/durum',{method:'PATCH',body:JSON.stringify({durum:'Tamamlandı'})});
+        }
+      } catch(e2){}
+      toast('Seans kaydedildi!');
+    }
+    resetSeansForm();
+    await renderSW(); updateStats();
   } catch(e) { toast('Hata: '+e.message,'err'); }
-  btn.innerHTML='✓ Seansı Kaydet'; btn.disabled=false;
+  btn.innerHTML = editSeansId ? '💾 Düzenlemeyi Kaydet' : '✓ Seansı Kaydet';
+  btn.disabled=false;
 }
 
 async function renderSW() {
@@ -1368,15 +1382,76 @@ async function renderSW() {
   if(!seanslar.length){el.innerHTML='<div class="empty">Henüz seans kaydı yok</div>';return;}
   el.innerHTML=seanslar.map(function(s){
     var isls=parseIslemler(s.islemler);
-    return '<div style="padding:11px;border:1px solid var(--bdr);border-radius:var(--r2);margin-bottom:8px">'
-      +'<div style="display:flex;justify-content:space-between;margin-bottom:5px">'
-      +'<span style="font-weight:700;font-size:13px">'+hAd(s.hasta_id)+'</span>'
-      +'<span style="font-size:11px;color:var(--tx2)">'+fmtDate(s.tarih)+' '+(s.saat||'')+'</span></div>'
-      +'<div style="font-size:11px;color:var(--tx2);margin-bottom:5px">'+s.fiz+' · Ağrı: '+s.agri+'/10</div>'
+    var isEdit = s.id===editSeansId;
+    return '<div style="padding:11px;border:1.5px solid '+(isEdit?'var(--acc)':'var(--bdr)')+';border-radius:var(--r2);margin-bottom:8px;background:'+(isEdit?'var(--as)':'var(--surf)'+'">'
+      +'<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:5px">'
+      +'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px">'+hAd(s.hasta_id)+'</div>'
+      +'<div style="font-size:11px;color:var(--tx2)">'+fmtDate(s.tarih)+' '+(s.saat||'')+' · '+s.fiz+'</div></div>'
+      +'<div style="display:flex;gap:4px;flex-shrink:0;margin-left:6px">'
+      +'<button class="btn btn-sm" style="font-size:10px;padding:4px 8px" data-sedit="'+s.id+'">✏️</button>'
+      +'<button class="btn btn-sm btn-d" style="font-size:10px;padding:4px 8px" data-sdel="'+s.id+'">🗑️</button>'
+      +'</div></div>'
+      +'<div style="font-size:11px;color:var(--tx2);margin-bottom:5px">Ağrı: '+s.agri+'/10</div>'
       +'<div>'+isls.map(iLabel).join('')+'</div>'
       +(s.not_?'<div style="margin-top:5px;font-size:11px;color:var(--tx2)">'+s.not_+'</div>':'')
       +'</div>';
   }).join('');
+  el.querySelectorAll('[data-sedit]').forEach(function(b){
+    b.addEventListener('click', function(){ loadSeansEdit(b.dataset.sedit); });
+  });
+  el.querySelectorAll('[data-sdel]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      if(!confirm('Bu seans silinsin mi?')) return;
+      await api('/api/seanslar/'+b.dataset.sdel,{method:'DELETE'});
+      if(editSeansId===b.dataset.sdel){ resetSeansForm(); }
+      await renderSW(); updateStats(); toast('Seans silindi.');
+    });
+  });
+}
+
+async function loadSeansEdit(sid) {
+  var seanslar=await api('/api/seanslar?limit=999');
+  var s=seanslar.find(function(x){return x.id===sid;});
+  if(!s){toast('Seans bulunamadı','err');return;}
+  editSeansId=sid;
+  // Hasta picker
+  hpReset('s');
+  hpSelect('s', s.hasta_id);
+  // Alanlar
+  g('s-fiz').value=s.fiz||'Fzt. 1';
+  g('s-tarih').value=s.tarih;
+  g('s-saat').value=s.saat||'';
+  g('s-not').value=s.not_||'';
+  var agri=s.agri!==undefined?s.agri:5;
+  g('s-agri').value=agri; g('agri-v').textContent=agri;
+  // Islem chips
+  var isls=parseIslemler(s.islemler);
+  selIslArr=[...isls];
+  document.querySelectorAll('.chip').forEach(function(c){
+    c.classList.toggle('on', selIslArr.indexOf(c.dataset.isl)!==-1);
+  });
+  // Buton ve baslik
+  g('seans-form-title').textContent='✏️ Seans Düzenle';
+  g('seans-btn').textContent='💾 Düzenlemeyi Kaydet';
+  g('seans-iptal-btn').style.display='block';
+  // Scroll to form
+  g('sec-seanslar').scrollIntoView({behavior:'smooth',block:'start'});
+  await renderSW();
+  toast('Seans düzenleme modunda');
+}
+
+function resetSeansForm() {
+  editSeansId=null;
+  selIslArr=[];
+  document.querySelectorAll('.chip').forEach(function(c){c.classList.remove('on');});
+  g('s-not').value=''; g('s-agri').value=5; g('agri-v').textContent='5';
+  hpReset('s');
+  var today=new Date().toISOString().split('T')[0];
+  g('s-tarih').value=today;
+  g('s-saat').value=new Date().toTimeString().slice(0,5);
+  g('seans-form-title').textContent='⚡ Yeni Seans Girişi';
+  g('seans-btn').textContent='✓ Seansı Kaydet';
+  g('seans-iptal-btn').style.display='none';
 }
 
 // ─── RAPOR ──────────────────────────────────────────────────────
@@ -1718,6 +1793,7 @@ function init() {
 
   // Chipler
   initChips();
+  g('seans-iptal-btn').addEventListener('click', function(){ resetSeansForm(); renderSW(); });
   // AI butonları
   g('btn-ai-seans-notu').addEventListener('click', aiSeansNotu);
   g('btn-ai-epikriz').addEventListener('click', aiEpikriz);
