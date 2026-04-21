@@ -394,6 +394,95 @@ def ai_ilerleme_analiz():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/ai/ftr-program', methods=['POST'])
+def ai_ftr_program():
+    d = request.json
+    hasta = d.get('hasta', {})
+    seanslar = d.get('seanslar', [])
+    secilen_islemler = d.get('secilen_islemler', [])  # Klinisyenin seçtiği işlemler
+    seans_sayisi = d.get('seans_sayisi', 10)
+    baslangic_tarihi = d.get('baslangic_tarihi', '')
+    ek_notlar = d.get('ek_notlar', '')
+
+    # Geçmişten en sık kullanılan işlemleri hesapla
+    gecmis_islemler = {}
+    for s in seanslar:
+        isls = s.get('islemler') or []
+        for isl in isls:
+            gecmis_islemler[isl] = gecmis_islemler.get(isl, 0) + 1
+    top_gecmis = sorted(gecmis_islemler.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    # Ağrı trendi
+    agri_list = [s.get('agri', 5) for s in seanslar if s.get('agri') is not None]
+
+    ISLEM_ADLARI = {
+        'SIS': 'SİS (Superficial Isı)', 'HIL': 'HIL Laser',
+        'ESWT': 'ESWT (Şok Dalga)', 'KINEZIO': 'Kinezyo Bantlama',
+        'INFRARUJ': 'İnfraruj', 'TENS': 'TENS (Elektrik Stimülasyon)',
+        'PARAFIN': 'Parafin Banyosu', 'LIPODEM': 'Lipödem Tedavisi',
+        'BANDAJ': 'Kompresyon Bandajlama', 'SKOLYOZ': 'Skolyoz Egzersizi',
+        'EGZERSIZ': 'Terapötik Egzersiz', 'KONTRAS': 'Kontrast Banyo'
+    }
+
+    secilen_str = ', '.join(ISLEM_ADLARI.get(i, i) for i in secilen_islemler) if secilen_islemler else '—'
+    gecmis_str = ', '.join(f"{ISLEM_ADLARI.get(k,k)} ({v}x)" for k,v in top_gecmis) if top_gecmis else 'İlk tedavi'
+
+    system = SYSTEM_BASE + f"""
+Görev: Hasta için detaylı FTR (Fizik Tedavi ve Rehabilitasyon) programı oluştur.
+
+PROGRAMDA MUTLAKA KULLAN:
+- Sadece klinisyenin seçtiği tedavi modaliteleri: {secilen_str}
+- Bizim klinikte uygulanan cihazlar ve yöntemler listesi yukarıdadır
+- Başlık: {MUAYENEHANE}
+
+FORMAT (tam bu yapıda yaz):
+─────────────────────────────────────────────
+{MUAYENEHANE}
+FİZİK TEDAVİ PROGRAMI
+─────────────────────────────────────────────
+HASTA: [ad soyad]
+TANI: [tanı]
+PROGRAM SÜRESİ: [X seans / X hafta]
+BAŞLANGIÇ TARİHİ: [tarih]
+─────────────────────────────────────────────
+UYGULANAN TEDAVİLER:
+[Her tedavi için: Modalite adı - Parametre/süre - Amaç]
+
+HAFTALIK PROGRAM:
+[Haftaya göre seans içeriği değişiyorsa belirt]
+
+SEANS DÜZENİ:
+[Seans başına uygulama sırası ve süreleri]
+
+EV EGZERSİZ PROGRAMI:
+[Varsa ev egzersizleri]
+
+HASTA TALİMATLARI:
+[Hastanın dikkat etmesi gerekenler]
+
+KONTRAENDİKASYONLAR:
+[Dikkat edilecek durumlar]
+
+Sorumlu Hekim: Dr. Zuhal Karakoyun
+─────────────────────────────────────────────
+"""
+    user = f"""Hasta: {hasta.get('ad','')} {hasta.get('soyad','')}
+Yaş: {hasta.get('dogum','—')} | Cinsiyet: {'Kadın' if hasta.get('cins')=='K' else 'Erkek'}
+Tanı: {hasta.get('tani','—')}
+Anamnez: {hasta.get('anm','—')}
+Önerilen seans sayısı: {seans_sayisi}
+Başlangıç tarihi: {baslangic_tarihi}
+Geçmiş tedavilerde kullanılan modaliteler: {gecmis_str}
+Başlangıç ağrı: {agri_list[-1] if agri_list else '—'}/10 | Güncel ağrı: {agri_list[0] if agri_list else '—'}/10
+Bu seans için seçilen modaliteler: {secilen_str}
+Ek notlar: {ek_notlar or '—'}
+
+FTR programını oluştur."""
+    try:
+        return jsonify({'program': call_claude(system, user, 1200)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/')
 def index():
     return render_template('index.html')
