@@ -483,6 +483,48 @@ FTR programını oluştur."""
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ─── HARICI ENTEGRASYON (Klinik Asistan) ───────────────────────────────────
+EXTERNAL_TOKEN = os.environ.get('EXTERNAL_TOKEN', '')
+
+def _tr_lower(s):
+    s = (s or '')
+    for a, b in (('İ','i'),('I','ı'),('Ş','ş'),('Ğ','ğ'),('Ü','ü'),('Ö','ö'),('Ç','ç')):
+        s = s.replace(a, b)
+    return ' '.join(s.lower().split())
+
+@app.route('/api/external/ozet')
+def external_ozet():
+    if EXTERNAL_TOKEN and request.headers.get('Authorization', '') != f'Bearer {EXTERNAL_TOKEN}':
+        return jsonify({'hata': 'yetkisiz'}), 401
+    ad = _tr_lower(request.args.get('ad'))
+    soyad = _tr_lower(request.args.get('soyad'))
+    if not ad or not soyad:
+        return jsonify({'bulundu': False})
+    conn = get_db()
+    rows = conn.execute("SELECT id, ad, soyad, tani, slim, fiz FROM hastalar").fetchall()
+    match = next((r for r in rows if _tr_lower(r['ad']) == ad and _tr_lower(r['soyad']) == soyad), None)
+    if not match:
+        conn.close()
+        return jsonify({'bulundu': False})
+    seanslar = conn.execute("SELECT tarih FROM seanslar WHERE hasta_id=? ORDER BY tarih", (match['id'],)).fetchall()
+    conn.close()
+    yapilan = len(seanslar)
+    son = seanslar[-1]['tarih'] if seanslar else None
+    onerilen = match['slim']
+    if onerilen:
+        toplam_seans, tamamlanan = onerilen, yapilan
+    else:
+        toplam_seans, tamamlanan = yapilan, None
+    return jsonify({
+        'bulundu': True,
+        'toplam_seans': toplam_seans,
+        'tamamlanan_seans': tamamlanan,
+        'aktif_program': match['tani'],
+        'son_seans_tarihi': son,
+        'fiz': match['fiz'],
+        'kimlik_dogrulama': 'yok',
+    })
+
 @app.route('/')
 def index():
     return render_template('index.html')
